@@ -17,7 +17,9 @@ def generar_compose_file(filename, cant_clientes):
         wln(3, "- PYTHONUNBUFFERED=1")
         wln(3, "- LOGGING_LEVEL=DEBUG")
         wln(2, "networks:")
-        wln(3, "- testing_net\n")
+        wln(3, "- testing_net")
+        wln(2, "volumes:")
+        wln(3, "- ./server/config.ini:/config.ini:ro\n")
 
         for i in range(1, cant_clientes + 1):
             wln(1, f"client{i}:")
@@ -30,7 +32,9 @@ def generar_compose_file(filename, cant_clientes):
             wln(2, f"networks:")
             wln(3, f"- testing_net")
             wln(2, f"depends_on:")
-            wln(3, f"- server\n")
+            wln(3, f"- server")
+            wln(2, f"volumes:")
+            wln(3, f"- ./client/config.yaml:/config.yaml:ro\n")
 
         wln(0, "networks:")
         wln(1, "testing_net:")
