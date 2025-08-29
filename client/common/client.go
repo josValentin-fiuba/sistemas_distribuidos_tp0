@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net"
 	"time"
-	"os/signal"
 	"github.com/op/go-logging"
 )
 
@@ -31,19 +30,6 @@ func NewClient(config ClientConfig) *Client {
 	client := &Client{
 		config: config,
 	}
-
-	// Channel to capture SIGTERM signal
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGTERM)
-	
-	// Goroutine to handle the SIGTERM signal
-	go func() {
-		sig := <-sigChan
-		log.Infof("closing server socket [sigterm]")
-		client.Shutdown()
-		os.Exit(0) // Graceful exit on signal
-	}()
-
 	return client
 }
 
