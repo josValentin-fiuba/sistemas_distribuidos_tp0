@@ -39,6 +39,7 @@ func NewClient(config ClientConfig) *Client {
 	// Goroutine to handle the SIGTERM signal
 	go func() {
 		sig := <-sigChan
+		log.Infof("closing server socket [sigterm]")
 		client.Shutdown()
 		os.Exit(0) // Graceful exit on signal
 	}()

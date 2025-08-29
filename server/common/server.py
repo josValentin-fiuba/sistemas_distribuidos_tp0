@@ -12,7 +12,9 @@ class Server:
         self._client_sock = None
 
     def sigterm_handler(self, signum, _):
+        logging.info('closing server socket [sigterm]')
         self._server_socket.close()
+        logging.info('closing client socket [sigterm]')
         self._client_sock.close()
         sys.exit(0) # Graceful exit on signal
 
