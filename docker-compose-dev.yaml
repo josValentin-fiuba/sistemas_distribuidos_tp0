@@ -11,6 +11,96 @@ services:
     volumes:
       - ./server/config.ini:/config.ini:ro
 
+  client1:
+    container_name: client1
+    image: client:latest
+    entrypoint: /client
+    environment:
+      - CLI_ID=1
+      - NOMBRE=nombre_1
+      - APELLIDO=apellido_1
+      - DOCUMENTO=0000001
+      - NACIMIENTO=2000-09-01
+      - NUMERO=1
+    networks:
+      - testing_net
+    depends_on:
+      - server
+    volumes:
+      - ./client/config.yaml:/config.yaml:ro
+
+  client2:
+    container_name: client2
+    image: client:latest
+    entrypoint: /client
+    environment:
+      - CLI_ID=2
+      - NOMBRE=nombre_2
+      - APELLIDO=apellido_2
+      - DOCUMENTO=0000002
+      - NACIMIENTO=2000-09-02
+      - NUMERO=2
+    networks:
+      - testing_net
+    depends_on:
+      - server
+    volumes:
+      - ./client/config.yaml:/config.yaml:ro
+
+  client3:
+    container_name: client3
+    image: client:latest
+    entrypoint: /client
+    environment:
+      - CLI_ID=3
+      - NOMBRE=nombre_3
+      - APELLIDO=apellido_3
+      - DOCUMENTO=0000003
+      - NACIMIENTO=2000-09-03
+      - NUMERO=3
+    networks:
+      - testing_net
+    depends_on:
+      - server
+    volumes:
+      - ./client/config.yaml:/config.yaml:ro
+
+  client4:
+    container_name: client4
+    image: client:latest
+    entrypoint: /client
+    environment:
+      - CLI_ID=4
+      - NOMBRE=nombre_4
+      - APELLIDO=apellido_4
+      - DOCUMENTO=0000004
+      - NACIMIENTO=2000-09-04
+      - NUMERO=4
+    networks:
+      - testing_net
+    depends_on:
+      - server
+    volumes:
+      - ./client/config.yaml:/config.yaml:ro
+
+  client5:
+    container_name: client5
+    image: client:latest
+    entrypoint: /client
+    environment:
+      - CLI_ID=5
+      - NOMBRE=nombre_5
+      - APELLIDO=apellido_5
+      - DOCUMENTO=0000005
+      - NACIMIENTO=2000-09-05
+      - NUMERO=5
+    networks:
+      - testing_net
+    depends_on:
+      - server
+    volumes:
+      - ./client/config.yaml:/config.yaml:ro
+
 networks:
   testing_net:
     ipam:
