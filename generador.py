@@ -37,7 +37,8 @@ def generar_compose_file(filename, cant_clientes):
             wln(2, f"depends_on:")
             wln(3, f"- server")
             wln(2, f"volumes:")
-            wln(3, f"- ./client/config.yaml:/config.yaml:ro\n")
+            wln(3, f"- ./client/config.yaml:/config.yaml:ro")
+            wln(3, f"- ./.data/dataset/agency-{i}.csv:/.data/agency-{i}.csv:ro\n")
 
         wln(0, "networks:")
         wln(1, "testing_net:")
