@@ -1,11 +1,15 @@
 package common
 
 import (
-	"bufio"
-	"fmt"
+	// "bufio"
+	// "fmt"
 	"net"
 	"time"
 	"github.com/op/go-logging"
+	"os"
+    "strconv"
+	"bytes"
+    "encoding/binary"
 )
 
 var log = logging.MustGetLogger("log")
@@ -49,6 +53,33 @@ func (c *Client) createClientSocket() error {
 	return nil
 }
 
+func (c *Client)sendBet() error {
+	buf := new(bytes.Buffer)
+
+    name := os.Getenv("NOMBRE")
+    lastName := os.Getenv("APELLIDO")
+    birthDate := os.Getenv("NACIMIENTO")
+
+	// 3 ints (4b each one)
+	binary.Write(buf, binary.BigEndian, uint32(len(name)))
+	binary.Write(buf, binary.BigEndian, uint32(len(lastName)))
+	binary.Write(buf, binary.BigEndian, uint32(len(birthDate)))
+	
+	buf.Write([]byte(name))
+	buf.Write([]byte(lastName))
+	buf.Write([]byte(birthDate))
+
+    dni, _ := strconv.Atoi(os.Getenv("DOCUMENTO"))
+    num, _ := strconv.Atoi(os.Getenv("NUMERO"))
+
+	binary.Write(buf, binary.BigEndian, uint32(dni))
+	binary.Write(buf, binary.BigEndian, uint32(num))
+	
+	return WriteAll(c.conn, buf.Bytes())
+	// _, err := c.conn.Write(buf.Bytes())
+	// return err
+}
+
 // StartClientLoop Send messages to the client until some time threshold is met
 func (c *Client) StartClientLoop() {
 	// There is an autoincremental msgID to identify every message sent
@@ -58,13 +89,16 @@ func (c *Client) StartClientLoop() {
 		c.createClientSocket()
 
 		// TODO: Modify the send to avoid short-write
-		fmt.Fprintf(
-			c.conn,
-			"[CLIENT %v] Message N°%v\n",
-			c.config.ID,
-			msgID,
-		)
-		msg, err := bufio.NewReader(c.conn).ReadString('\n')
+		// fmt.Fprintf(
+		// 	c.conn,
+		// 	"[CLIENT %v] Message N°%v\n",
+		// 	c.config.ID,
+		// 	msgID,
+		// )
+		// msg, err := bufio.NewReader(c.conn).ReadString('\n')
+		err := c.sendBet()
+		log.Infof("action: apuesta_enviada | result: success | dni: %v | numero: %v", os.Getenv("DOCUMENTO"), os.Getenv("NUMERO"))
+
 		c.conn.Close()
 
 		if err != nil {
@@ -75,10 +109,10 @@ func (c *Client) StartClientLoop() {
 			return
 		}
 
-		log.Infof("action: receive_message | result: success | client_id: %v | msg: %v",
-			c.config.ID,
-			msg,
-		)
+		// log.Infof("action: receive_message | result: success | client_id: %v | msg: %v",
+		// 	c.config.ID,
+		// 	msg,
+		// )
 
 		// Wait a time between sending one message and the next one
 		time.Sleep(c.config.LoopPeriod)

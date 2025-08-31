@@ -29,7 +29,7 @@ def generar_compose_file(filename, cant_clientes):
             wln(3, f"- CLI_ID={i}")
             wln(3, f"- NOMBRE=nombre_{i}")
             wln(3, f"- APELLIDO=apellido_{i}")
-            wln(3, f"- DOCUMENTO=000000{i}")
+            wln(3, f"- DOCUMENTO={i}")
             wln(3, f"- NACIMIENTO=2000-09-0{i}")
             wln(3, f"- NUMERO={i}")
             wln(2, f"networks:")
