@@ -40,6 +40,20 @@ class Server:
             self.__handle_client_connection(self._client_sock, agency_index)
             agency_index += 1
 
+    def _recv_bet(self, client_sock, agency_index):
+        data = recv_all(client_sock, 12)
+        name_len, last_name_len, birthdate_len = struct.unpack('!III', data)
+
+        name = recv_all(client_sock, name_len).decode('utf-8')                
+        last_name = recv_all(client_sock, last_name_len).decode('utf-8')                
+        birthdate = recv_all(client_sock, birthdate_len).decode('utf-8')       
+
+        data = recv_all(client_sock, 8)
+        dni, num = struct.unpack('!II', data)
+
+        return Bet(str(agency_index), name, last_name, str(dni), birthdate, str(num))
+
+
     def __handle_client_connection(self, client_sock, agency_index):
         """
         Read message from a specific client socket and closes the socket
@@ -48,29 +62,12 @@ class Server:
         client socket will also be closed
         """
         try:
-            # TODO: Modify the receive to avoid short-reads       
-            data = recv_all(client_sock, 12)
-            name_len, last_name_len, birthdate_len = struct.unpack('!III', data)
-
-            name = recv_all(client_sock, name_len).decode('utf-8')                
-            last_name = recv_all(client_sock, last_name_len).decode('utf-8')                
-            birthdate = recv_all(client_sock, birthdate_len).decode('utf-8')             
-
-            data = recv_all(client_sock, 8)
-            dni, num = struct.unpack('!II', data)
-
-            bet = Bet(str(agency_index), name, last_name, str(dni), birthdate, str(num))
+            bet = self._recv_bet(client_sock, agency_index)
             store_bets([bet])
-            logging.info(f'action: apuesta_almacenada | result: success | dni: {dni} | numero: {num}')
+            logging.info(f'action: apuesta_almacenada | result: success | dni: {bet.document} | numero: {bet.number}')
             
-            # msg = client_sock.recv(1024).rstrip().decode('utf-8')
-            # addr = client_sock.getpeername()
-            # logging.info(f'action: receive_message | result: success | ip: {addr[0]} | msg: {msg}')
-
-            # # TODO: Modify the send to avoid short-writes
-            # client_sock.send("{}\n".format(msg).encode('utf-8'))
         except ConnectionError as e:
-            logging.error(f"Connection closed {e}")
+            logging.log(f"Connection closed {e}")
         except OSError as e:
             logging.error("action: receive_message | result: fail | error: {e}")
         finally:

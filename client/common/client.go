@@ -61,9 +61,9 @@ func (c *Client)sendBet() error {
     birthDate := os.Getenv("NACIMIENTO")
 
 	// 3 ints (4b each one)
-	binary.Write(buf, binary.BigEndian, uint32(len(name)))
-	binary.Write(buf, binary.BigEndian, uint32(len(lastName)))
-	binary.Write(buf, binary.BigEndian, uint32(len(birthDate)))
+	binary.Write(buf, binary.BigEndian, int32(len(name)))
+	binary.Write(buf, binary.BigEndian, int32(len(lastName)))
+	binary.Write(buf, binary.BigEndian, int32(len(birthDate)))
 	
 	buf.Write([]byte(name))
 	buf.Write([]byte(lastName))
@@ -72,12 +72,10 @@ func (c *Client)sendBet() error {
     dni, _ := strconv.Atoi(os.Getenv("DOCUMENTO"))
     num, _ := strconv.Atoi(os.Getenv("NUMERO"))
 
-	binary.Write(buf, binary.BigEndian, uint32(dni))
-	binary.Write(buf, binary.BigEndian, uint32(num))
+	binary.Write(buf, binary.BigEndian, int32(dni))
+	binary.Write(buf, binary.BigEndian, int32(num))
 	
 	return WriteAll(c.conn, buf.Bytes())
-	// _, err := c.conn.Write(buf.Bytes())
-	// return err
 }
 
 // StartClientLoop Send messages to the client until some time threshold is met
@@ -88,32 +86,18 @@ func (c *Client) StartClientLoop() {
 		// Create the connection the server in every loop iteration. Send an
 		c.createClientSocket()
 
-		// TODO: Modify the send to avoid short-write
-		// fmt.Fprintf(
-		// 	c.conn,
-		// 	"[CLIENT %v] Message N°%v\n",
-		// 	c.config.ID,
-		// 	msgID,
-		// )
-		// msg, err := bufio.NewReader(c.conn).ReadString('\n')
 		err := c.sendBet()
 		log.Infof("action: apuesta_enviada | result: success | dni: %v | numero: %v", os.Getenv("DOCUMENTO"), os.Getenv("NUMERO"))
 
 		c.conn.Close()
 
 		if err != nil {
-			log.Errorf("action: receive_message | result: fail | client_id: %v | error: %v",
+			log.Errorf("Couldn't send bet to server. id %v | error: %v",
 				c.config.ID,
 				err,
 			)
 			return
 		}
-
-		// log.Infof("action: receive_message | result: success | client_id: %v | msg: %v",
-		// 	c.config.ID,
-		// 	msg,
-		// )
-
 		// Wait a time between sending one message and the next one
 		time.Sleep(c.config.LoopPeriod)
 

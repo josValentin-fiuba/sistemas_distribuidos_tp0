@@ -6,6 +6,8 @@ def recv_all(skt, n):
 
     If the peer closes the connection or an error occurs before `size` bytes are received, 
     a ConnectionError is raised.
+
+    Avoids short reads.
     """
     data = b''
     while len(data) < n:
