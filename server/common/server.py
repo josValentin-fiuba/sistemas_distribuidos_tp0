@@ -14,6 +14,7 @@ class Server:
         self._server_socket.listen(listen_backlog)
         self._client_sock = None
         self._clients_done_sockets = {}
+        self._agencies = set()
 
     def sigterm_handler(self, signum, _):
         logging.info('closing server socket [sigterm]')
@@ -89,10 +90,11 @@ class Server:
         bets_in_batch = []
         try:
             agency_id, end_signal = self._recv_end_signal(client_sock)
+            self._agencies.add(agency_id)
             if end_signal:
                 logging.info(f"No bets to receive. Agency({agency_id}) sent end signal")
                 self._clients_done_sockets[agency_id] = client_sock
-                if len(self._clients_done_sockets) == 5:
+                if len(self._clients_done_sockets) == len(self._agencies):
                     self._send_winners()
                 return
 
@@ -101,14 +103,14 @@ class Server:
                 bets_in_batch.append(bet)
             
         except ConnectionError as e:
-            logging.info(f"Connection closed {e}")
             store_bets(bets_in_batch)
+            logging.info(f"Connection closed {e}")
             logging.info(f"action: apuesta_recibida | result: success | cantidad: {len(bets_in_batch)}")
+            client_sock.close()
 
         except OSError as e:
-            # logging.error("action: receive_message | result: fail | error: {e}")
+            logging.error(f"action: receive_message | result: fail | error: {e}")
             logging.info(f"action: apuesta_recibida | result: fail | cantidad: {len(bets_in_batch)}")
-        finally:
             client_sock.close()
 
     def __accept_new_connection(self):
