@@ -61,15 +61,20 @@ class Server:
         If a problem arises in the communication with the client, the
         client socket will also be closed
         """
+        bets_in_batch = []
         try:
-            bet = self._recv_bet(client_sock, agency_index)
-            store_bets([bet])
-            logging.info(f'action: apuesta_almacenada | result: success | dni: {bet.document} | numero: {bet.number}')
+            while True:
+                bet = self._recv_bet(client_sock, agency_index)
+                bets_in_batch.append(bet)
             
         except ConnectionError as e:
-            logging.log(f"Connection closed {e}")
+            logging.info(f"Connection closed {e}")
+            store_bets(bets_in_batch)
+            logging.info(f"action: apuesta_recibida | result: success | cantidad: {len(bets_in_batch)}")
+
         except OSError as e:
-            logging.error("action: receive_message | result: fail | error: {e}")
+            # logging.error("action: receive_message | result: fail | error: {e}")
+            logging.info(f"action: apuesta_recibida | result: fail | cantidad: {len(bets_in_batch)}")
         finally:
             client_sock.close()
 
