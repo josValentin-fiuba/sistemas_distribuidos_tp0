@@ -90,6 +90,25 @@ func (c *Client)SendBet(bet Bet) error {
 	return WriteAll(c.conn, buf.Bytes())
 }
 
+// Converts a boolean to a byte (1 for true, 0 for false)
+func BoolToByte(v bool) byte {
+    if v {
+        return 1
+    }
+    return 0
+}
+
+// Sends the end signal to the server (4 bytes agency_id + 1 byte signal)
+func (c *Client)SendEndSignal(agency_id int, signal bool) error {
+	buf := new(bytes.Buffer)
+	binary.Write(buf, binary.BigEndian, int32(agency_id))
+	err := buf.WriteByte(BoolToByte(signal))
+	if(err != nil){
+		return err
+	}
+	return WriteAll(c.conn, buf.Bytes())
+}
+
 // Reads a CSV record and parses it to a Bet struct
 func ReadBet(record []string) (Bet, error) {
 	var bet Bet
@@ -114,6 +133,29 @@ func ReadBet(record []string) (Bet, error) {
 	return bet, nil
 }
 
+// Waits for the server response with the winners
+func (c *Client)GetWinnersResponse() ([]int, error) {
+	// Read number of winners (4 bytes)
+	winnersCountBytes, err := ReadAll(c.conn, 4)
+	if err != nil {
+		return nil, err
+	}
+	winnersCount := int(binary.BigEndian.Uint32(winnersCountBytes))
+
+	winners := make([]int, winnersCount)
+	for i := 0; i < winnersCount; i++ {
+		// Read winner dni (4 bytes)
+		dniBytes, err := ReadAll(c.conn, 4)
+		if err != nil {
+			return nil, err
+		}
+		dni := binary.BigEndian.Uint32(dniBytes)
+		winners[i] = int(dni)
+	}
+
+	return winners, nil
+}	
+
 // StartClientLoop Send messages to the client until some time threshold is met
 func (c *Client) StartClientLoop() {
 	agency_id, _ := strconv.Atoi(c.config.ID)
@@ -129,6 +171,14 @@ func (c *Client) StartClientLoop() {
 	for !done {
 
 		c.createClientSocket()
+		if c.SendEndSignal(agency_id, false) != nil {
+			log.Errorf("Couldn't send end signal(0) to server. id %v | error: %v",
+				c.config.ID,
+				err,
+			)
+			return
+		}
+
 		bytesSent := 0
 		for	 i := 0; i < c.config.BatchMax; i++ {
 			record, err := reader.Read()
@@ -149,6 +199,7 @@ func (c *Client) StartClientLoop() {
 			// Hard limit for batch size (8KB)
 			if bytesSent + GetBetPacketSize(bet) > 8192 {
 				log.Errorf("Invalid batch size, skipping")
+				c.conn.Close()
 				return
 			}
 
@@ -170,6 +221,30 @@ func (c *Client) StartClientLoop() {
 		c.conn.Close()
 		time.Sleep(c.config.LoopPeriod)
 	}
+
+	c.createClientSocket()
+	if c.SendEndSignal(agency_id, true) != nil {
+		log.Errorf("Couldn't send end signal(1) to server. id %v | error: %v",
+			c.config.ID,
+			err,
+		)
+		return
+	}
+	
+	// Wait for the winner response
+	winners, err := c.GetWinnersResponse()
+	c.conn.Close()
+
+	if err != nil {
+		log.Errorf("Couldn't get winners response from server. id %v | error: %v",
+			c.config.ID,
+			err,
+		)
+		return
+	}
+
+	log.Infof("action: consulta_ganadores | result: success | cant_ganadores: %v", len(winners))
+
 	log.Infof("action: loop_finished | result: success | client_id: %v", c.config.ID)
 }
 

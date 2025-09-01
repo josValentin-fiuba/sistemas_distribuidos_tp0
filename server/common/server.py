@@ -13,6 +13,7 @@ class Server:
         self._server_socket.bind(('', port))
         self._server_socket.listen(listen_backlog)
         self._client_sock = None
+        self._clients_done_sockets = {}
 
     def sigterm_handler(self, signum, _):
         logging.info('closing server socket [sigterm]')
@@ -34,13 +35,16 @@ class Server:
         # Register SIGTERM signal handler
         signal.signal(signal.SIGTERM, self.sigterm_handler)
 
-        agency_index = 0
         while True:
             self._client_sock = self.__accept_new_connection()
-            self.__handle_client_connection(self._client_sock, agency_index)
-            agency_index += 1
+            self.__handle_client_connection(self._client_sock)
 
-    def _recv_bet(self, client_sock, agency_index):
+    def _recv_end_signal(self, client_sock):
+        data = recv_all(client_sock, 5)
+        agency_id, signal = struct.unpack('!IB', data)
+        return agency_id, bool(signal)
+
+    def _recv_bet(self, client_sock, agency_id):
         data = recv_all(client_sock, 12)
         name_len, last_name_len, birthdate_len = struct.unpack('!III', data)
 
@@ -51,10 +55,31 @@ class Server:
         data = recv_all(client_sock, 8)
         dni, num = struct.unpack('!II', data)
 
-        return Bet(str(agency_index), name, last_name, str(dni), birthdate, str(num))
+        return Bet(str(agency_id), name, last_name, str(dni), birthdate, str(num))
 
+    def _send_winners(self):
+        logging.info(f"action: sorteo | result: success")
+        all_bets = load_bets()
 
-    def __handle_client_connection(self, client_sock, agency_index):
+        winners_per_agency = {}
+        for agency_id in self._clients_done_sockets.keys():
+            winners_per_agency[agency_id] = []
+        
+        for bet in all_bets:
+            if not has_won(bet):
+                continue
+            if bet.agency in winners_per_agency:
+                winners_per_agency[bet.agency].append(bet)
+
+        for agency_id, winners in winners_per_agency.items():
+            agency_sock = self._clients_done_sockets[agency_id]
+            agency_sock.sendall(struct.pack('!I', len(winners)))
+            for bet in winners:
+                agency_sock.sendall(struct.pack('!I', int(bet.document)))
+
+        self._clients_done_sockets = {}
+    
+    def __handle_client_connection(self, client_sock):
         """
         Read message from a specific client socket and closes the socket
 
@@ -63,8 +88,16 @@ class Server:
         """
         bets_in_batch = []
         try:
+            agency_id, end_signal = self._recv_end_signal(client_sock)
+            if end_signal:
+                logging.info(f"No bets to receive. Agency({agency_id}) sent end signal")
+                self._clients_done_sockets[agency_id] = client_sock
+                if len(self._clients_done_sockets) == 5:
+                    self._send_winners()
+                return
+
             while True:
-                bet = self._recv_bet(client_sock, agency_index)
+                bet = self._recv_bet(client_sock, agency_id)
                 bets_in_batch.append(bet)
             
         except ConnectionError as e:
