@@ -66,8 +66,13 @@ func (c *Client) createClientSocket() error {
 	return nil
 }
 
+// Returns the size in bytes of a Bet struct once serialized to be sent
+func GetBetPacketSize(bet Bet) int{
+	return 12 + len(bet.name) + len(bet.lastName) + len(bet.birthDate) + 8
+}
+
 // Sends a bet to the server
-func (c *Client)sendBet(bet Bet) error {
+func (c *Client)SendBet(bet Bet) error {
 	buf := new(bytes.Buffer)
 
 	// 3 ints (4b each one)
@@ -124,7 +129,7 @@ func (c *Client) StartClientLoop() {
 	for !done {
 
 		c.createClientSocket()
-
+		bytesSent := 0
 		for	 i := 0; i < c.config.BatchMax; i++ {
 			record, err := reader.Read()
 			if err == io.EOF {
@@ -141,7 +146,15 @@ func (c *Client) StartClientLoop() {
 				continue
 			}
 
-			err = c.sendBet(bet)
+			// Hard limit for batch size (8KB)
+			if bytesSent + GetBetPacketSize(bet) > 8192 {
+				log.Errorf("Invalid batch size, skipping")
+				return
+			}
+
+			bytesSent += GetBetPacketSize(bet)
+
+			err = c.SendBet(bet)
 			
 			if err != nil {
 				log.Errorf("Couldn't send bet to server. id %v | error: %v",
