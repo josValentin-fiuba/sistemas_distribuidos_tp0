@@ -2,7 +2,6 @@ import socket
 import logging
 import signal
 import sys
-import struct
 from common.socket_utils import recv_all
 from common.utils import *
 
@@ -41,15 +40,21 @@ class Server:
             agency_index += 1
 
     def _recv_bet(self, client_sock, agency_index):
-        data = recv_all(client_sock, 12)
-        name_len, last_name_len, birthdate_len = struct.unpack('!III', data)
+        data = recv_all(client_sock, 4)
+        name_len = int.from_bytes(data, byteorder="big", signed=False)
+        data = recv_all(client_sock, 4)
+        last_name_len = int.from_bytes(data, byteorder="big", signed=False)
+        data = recv_all(client_sock, 4)
+        birthdate_len = int.from_bytes(data, byteorder="big", signed=False)
 
         name = recv_all(client_sock, name_len).decode('utf-8')                
         last_name = recv_all(client_sock, last_name_len).decode('utf-8')                
         birthdate = recv_all(client_sock, birthdate_len).decode('utf-8')       
 
-        data = recv_all(client_sock, 8)
-        dni, num = struct.unpack('!II', data)
+        data = recv_all(client_sock, 4)
+        dni = int.from_bytes(data, byteorder="big", signed=False)
+        data = recv_all(client_sock, 4)
+        num = int.from_bytes(data, byteorder="big", signed=False)
 
         return Bet(str(agency_index), name, last_name, str(dni), birthdate, str(num))
 
