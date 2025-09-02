@@ -2,7 +2,6 @@ import socket
 import logging
 import signal
 import sys
-import struct
 from common.socket_utils import recv_all
 from common.utils import *
 
@@ -41,20 +40,28 @@ class Server:
             self.__handle_client_connection(self._client_sock)
 
     def _recv_end_signal(self, client_sock):
-        data = recv_all(client_sock, 5)
-        agency_id, signal = struct.unpack('!IB', data)
-        return agency_id, bool(signal)
+        data = recv_all(client_sock, 4)
+        agency_id = int.from_bytes(data, byteorder="big", signed=False)
+        data = recv_all(client_sock, 1)
+        signal = bool(data[0])
+        return agency_id, signal
 
     def _recv_bet(self, client_sock, agency_id):
-        data = recv_all(client_sock, 12)
-        name_len, last_name_len, birthdate_len = struct.unpack('!III', data)
+        data = recv_all(client_sock, 4)
+        name_len = int.from_bytes(data, byteorder="big", signed=False)
+        data = recv_all(client_sock, 4)
+        last_name_len = int.from_bytes(data, byteorder="big", signed=False)
+        data = recv_all(client_sock, 4)
+        birthdate_len = int.from_bytes(data, byteorder="big", signed=False)
 
         name = recv_all(client_sock, name_len).decode('utf-8')                
         last_name = recv_all(client_sock, last_name_len).decode('utf-8')                
         birthdate = recv_all(client_sock, birthdate_len).decode('utf-8')       
 
-        data = recv_all(client_sock, 8)
-        dni, num = struct.unpack('!II', data)
+        data = recv_all(client_sock, 4)
+        dni = int.from_bytes(data, byteorder="big", signed=False)
+        data = recv_all(client_sock, 4)
+        num = int.from_bytes(data, byteorder="big", signed=False)
 
         return Bet(str(agency_id), name, last_name, str(dni), birthdate, str(num))
 
@@ -74,9 +81,9 @@ class Server:
 
         for agency_id, winners in winners_per_agency.items():
             agency_sock = self._clients_done_sockets[agency_id]
-            agency_sock.sendall(struct.pack('!I', len(winners)))
+            agency_sock.sendall(len(winners).to_bytes(4, byteorder='big', signed=False))
             for bet in winners:
-                agency_sock.sendall(struct.pack('!I', int(bet.document)))
+                agency_sock.sendall(int(bet.document).to_bytes(4, byteorder='big', signed=False))
 
         self._clients_done_sockets = {}
     
