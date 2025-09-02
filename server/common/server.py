@@ -2,6 +2,7 @@ import socket
 import logging
 import signal
 import sys
+import multiprocessing
 from common.socket_utils import recv_all
 from common.utils import *
 
@@ -14,6 +15,7 @@ class Server:
         self._client_sock = None
         self._clients_done_sockets = {}
         self._agencies = set()
+        self.save_lock = multiprocessing.Lock()
 
     def sigterm_handler(self, signum, _):
         logging.info('closing server socket [sigterm]')
@@ -37,7 +39,11 @@ class Server:
 
         while True:
             self._client_sock = self.__accept_new_connection()
-            self.__handle_client_connection(self._client_sock)
+            p = multiprocessing.Process(target=self.__handle_client_connection, args=(self._client_sock,))
+            p.daemon = True
+            p.start()
+            self._client_sock.close()
+            # self.__handle_client_connection(self._client_sock)
 
     def _recv_end_signal(self, client_sock):
         data = recv_all(client_sock, 4)
@@ -110,7 +116,8 @@ class Server:
                 bets_in_batch.append(bet)
             
         except ConnectionError as e:
-            store_bets(bets_in_batch)
+            with self.save_lock:
+                store_bets(bets_in_batch)
             logging.info(f"Connection closed {e}")
             logging.info(f"action: apuesta_recibida | result: success | cantidad: {len(bets_in_batch)}")
             client_sock.close()
