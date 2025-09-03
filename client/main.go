@@ -116,13 +116,13 @@ func main() {
 	}
 
 	if clientConfig.MaxAttempts <= 0{
-		clientConfig.MaxAttempts = 1
+		clientConfig.MaxAttempts = 3
 	}
 
 	client := common.NewClient(clientConfig)
 
 	// Channel to capture SIGTERM signal
-	sigChan := make(chan os.Signal, 1)
+	sigChan := make(chan os.Signal, 2)
 	signal.Notify(sigChan, syscall.SIGTERM)
 	
 	// Goroutine to handle the SIGTERM signal

@@ -57,13 +57,6 @@ func NewClient(config ClientConfig) *Client {
 // is returned
 func (c *Client) createClientSocket() error {
 	conn, err := net.Dial("tcp", c.config.ServerAddress)
-	if err != nil {
-		log.Criticalf(
-			"action: connect | result: fail | client_id: %v | error: %v",
-			c.config.ID,
-			err,
-		)
-	}
 	c.conn = conn
 	return err
 }
