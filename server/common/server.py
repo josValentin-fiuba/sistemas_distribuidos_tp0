@@ -7,18 +7,19 @@ from common.utils import *
 import common.protocol as protocol
 
 class Server:
-    def __init__(self, port, listen_backlog):
+    def __init__(self, port, listen_backlog, agency_connection_timeout):
         manager = multiprocessing.Manager()
 
         # Initialize server socket
         self._server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self._server_socket.bind(('', port))
         self._server_socket.listen(listen_backlog)
-        self._max_workers = listen_backlog + 1 # (N_Agencies = Max workers = Listen backlog) + agencies alive timeout worker
+        self._max_workers = listen_backlog + 1 # (N_Agencies = Client workers = Listen backlog) + Winners worker
         self._clients_done_sockets = manager.dict()
         self._agencies = manager.dict()
         self._lock = manager.Lock()
         self._cond = manager.Condition(self._lock)
+        self._agency_connection_timeout = agency_connection_timeout
 
     def run(self):
         """

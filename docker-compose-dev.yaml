@@ -10,6 +10,7 @@ services:
       - testing_net
     volumes:
       - ./server/config.ini:/config.ini:ro
+      - ./server/params.ini:/params.ini:ro
 
   client1:
     container_name: client1

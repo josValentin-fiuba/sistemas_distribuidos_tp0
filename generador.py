@@ -19,6 +19,7 @@ def generar_compose_file(filename, cant_clientes):
         wln(3, "- testing_net")
         wln(2, "volumes:")
         wln(3, "- ./server/config.ini:/config.ini:ro\n")
+        wln(3, "- ./server/params.ini:/params.ini:ro\n")
 
         for i in range(1, cant_clientes + 1):
             wln(1, f"client{i}:")

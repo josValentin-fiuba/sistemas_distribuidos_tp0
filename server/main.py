@@ -33,6 +33,18 @@ def initialize_config():
 
     return config_params
 
+def initialize_params():
+    config = ConfigParser(os.environ)
+    config.read("params.ini")
+    server_params = {}
+    try:
+        server_params["agencies_connection_timeout"] = int(os.getenv('AGENCIES_CONNECTION_TIMEOUT', config["DEFAULT"]["AGENCIES_CONNECTION_TIMEOUT"]))
+    except KeyError as e:
+        raise KeyError("Key was not found. Error: {} .Aborting server".format(e))
+    except ValueError as e:
+        raise ValueError("Key could not be parsed. Error: {}. Aborting server".format(e))
+
+    return server_params
 
 def main():
     config_params = initialize_config()
@@ -47,8 +59,11 @@ def main():
     logging.debug(f"action: config | result: success | port: {port} | "
                   f"listen_backlog: {listen_backlog} | logging_level: {logging_level}")
 
+    params = initialize_params()
+    agencies_connection_timeout = params["agencies_connection_timeout"]
+
     # Initialize server and start server loop
-    server = Server(port, listen_backlog)
+    server = Server(port, listen_backlog, agencies_connection_timeout)
     server.run()
 
 def initialize_log(logging_level):
