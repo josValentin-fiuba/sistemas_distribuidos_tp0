@@ -15,7 +15,8 @@ class Server:
         self._client_sock = None
         self._clients_done_sockets = {}
         self._agencies = set()
-        self.lock = multiprocessing.Manager().Lock()
+        self._lock = multiprocessing.Manager().Lock()
+        self._max_workers = listen_backlog
 
     def sigterm_handler(self, signum, _):
         logging.info('closing server socket [sigterm]')
@@ -38,7 +39,7 @@ class Server:
         signal.signal(signal.SIGTERM, self.sigterm_handler)
 
         # Create a pool of workers
-        pool = multiprocessing.Pool(processes=5)
+        pool = multiprocessing.Pool(processes=self._max_workers)
 
         try:
             while True:
@@ -107,12 +108,12 @@ class Server:
         bets_in_batch = []
         try:
             agency_id, end_signal = self._recv_end_signal(client_sock)
-            with self.lock:
+            with self._lock:
                 self._agencies.add(agency_id)
             
             if end_signal:
                 logging.info(f"No bets to receive. Agency({agency_id}) sent end signal")
-                with self.lock:
+                with self._lock:
                     self._clients_done_sockets[agency_id] = client_sock
                     if len(self._clients_done_sockets) == len(self._agencies):
                         self._send_winners()
@@ -123,7 +124,7 @@ class Server:
                 bets_in_batch.append(bet)
             
         except ConnectionError as e:
-            with self.lock:
+            with self._lock:
                 store_bets(bets_in_batch)
             logging.info(f"Connection closed {e}")
             logging.info(f"action: apuesta_recibida | result: success | cantidad: {len(bets_in_batch)}")
