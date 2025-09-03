@@ -111,6 +111,8 @@ func main() {
 		LoopAmount:    v.GetInt("loop.amount"),
 		LoopPeriod:    v.GetDuration("loop.period"),
 		BatchMax:	   v.GetInt("batch.maxAmount"),
+		MaxAttempts:   v.GetInt("handshake.maxAttempts"),
+		AttemptDelay:  v.GetInt("handshake.attemptDelay"),
 	}
 
 	client := common.NewClient(clientConfig)

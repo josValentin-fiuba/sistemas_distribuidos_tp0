@@ -24,6 +24,8 @@ type ClientConfig struct {
 	LoopAmount    int
 	LoopPeriod    time.Duration
 	BatchMax	  int
+	MaxAttempts	  int
+	AttemptDelay  int
 }
 
 // Struct to store a bet data
@@ -63,7 +65,21 @@ func (c *Client) createClientSocket() error {
 		)
 	}
 	c.conn = conn
-	return nil
+	return err
+}
+
+// Initialize de client socket with resiliency, trying to connect
+// to the server until success or until the max number of attempts
+// is reached
+func (c *Client) createClientSocketResilency() error {
+	for i := 0; i < c.config.MaxAttempts; i++ {
+		err := c.createClientSocket()
+		if err == nil {
+			return nil
+		}
+	}
+	time.Sleep(time.Duration(c.config.AttemptDelay) * time.Millisecond)
+	return fmt.Errorf("Connection error, max connect attempts reached")
 }
 
 // Returns the size in bytes of a Bet struct once serialized to be sent
@@ -170,8 +186,14 @@ func (c *Client) StartClientLoop() {
 	done := false
 	for !done {
 
-		c.createClientSocket()
-		if c.SendEndSignal(agency_id, false) != nil {
+		if err := c.createClientSocketResilency(); err != nil {
+			log.Errorf("Couldn't connect to server. id %v | error: %v",
+				c.config.ID,
+				err,
+			)
+			return
+		}
+		if err := c.SendEndSignal(agency_id, false); err != nil {
 			log.Errorf("Couldn't send end signal(0) to server. id %v | error: %v",
 				c.config.ID,
 				err,
@@ -222,8 +244,15 @@ func (c *Client) StartClientLoop() {
 		time.Sleep(c.config.LoopPeriod)
 	}
 
-	c.createClientSocket()
-	if c.SendEndSignal(agency_id, true) != nil {
+	if err := c.createClientSocketResilency(); err != nil {
+		log.Errorf("Couldn't connect to server. id %v | error: %v",
+			c.config.ID,
+			err,
+		)
+		return
+	}
+
+	if err := c.SendEndSignal(agency_id, true); err != nil {
 		log.Errorf("Couldn't send end signal(1) to server. id %v | error: %v",
 			c.config.ID,
 			err,

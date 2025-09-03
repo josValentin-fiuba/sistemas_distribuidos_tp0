@@ -8,23 +8,16 @@ from common.utils import *
 
 class Server:
     def __init__(self, port, listen_backlog):
+        manager = multiprocessing.Manager()
+
         # Initialize server socket
         self._server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self._server_socket.bind(('', port))
         self._server_socket.listen(listen_backlog)
-        self._client_sock = None
-        self._clients_done_sockets = {}
-        self._agencies = set()
-        self._lock = multiprocessing.Manager().Lock()
-        self._max_workers = listen_backlog
-
-    def sigterm_handler(self, signum, _):
-        logging.info('closing server socket [sigterm]')
-        self._server_socket.close()
-        if self._client_sock:
-            logging.info('closing connected client socket [sigterm]')
-            self._client_sock.close()
-        sys.exit(0) # Graceful exit on signal
+        self._max_workers = listen_backlog # N_Agencies = Max workers = Listen backlog
+        self._clients_done_sockets = manager.dict()
+        self._agencies = manager.dict()
+        self._lock = manager.Lock()
 
     def run(self):
         """
@@ -35,16 +28,21 @@ class Server:
         finishes, servers starts to accept new connections again
         """
 
-        # Register SIGTERM signal handler
-        signal.signal(signal.SIGTERM, self.sigterm_handler)
-
-        # Create a pool of workers
         pool = multiprocessing.Pool(processes=self._max_workers)
+
+        # Register SIGTERM signal handler considering pool
+        def sigterm_handler(signum, _):
+            logging.info('closing server socket [sigterm]')
+            self._server_socket.close()
+            pool.terminate() # Terminate all worker processes (send SIGTERM to children)
+            sys.exit(0) # Graceful exit on signal
+
+        signal.signal(signal.SIGTERM, sigterm_handler)
 
         try:
             while True:
-                self._client_sock = self.__accept_new_connection()
-                pool.apply_async(self._handle_client_connection, (self._client_sock,))
+                client_sock = self.__accept_new_connection()
+                pool.apply_async(self._handle_client_connection, (client_sock,))
         finally:
             self._server_socket.close()
             pool.close()
@@ -95,8 +93,9 @@ class Server:
             agency_sock.sendall(len(winners).to_bytes(4, byteorder='big', signed=False))
             for bet in winners:
                 agency_sock.sendall(int(bet.document).to_bytes(4, byteorder='big', signed=False))
-
-        self._clients_done_sockets = {}
+            agency_sock.close()
+            
+        self._clients_done_sockets.clear()
     
     def _handle_client_connection(self, client_sock):
         """
@@ -105,19 +104,28 @@ class Server:
         If a problem arises in the communication with the client, the
         client socket will also be closed
         """
+        
+        # Each worker process should handle SIGTERM to close client socket and end gracefully
+        def worker_sigterm_handler(signum, _):
+            client_sock.close()
+            sys.exit(0)
+        signal.signal(signal.SIGTERM, worker_sigterm_handler)
+
         bets_in_batch = []
         try:
             agency_id, end_signal = self._recv_end_signal(client_sock)
             with self._lock:
-                self._agencies.add(agency_id)
+                self._agencies[agency_id] = True
             
             if end_signal:
                 logging.info(f"No bets to receive. Agency({agency_id}) sent end signal")
                 with self._lock:
                     self._clients_done_sockets[agency_id] = client_sock
+                    
                     if len(self._clients_done_sockets) == len(self._agencies):
+                        logging.info(f"Time to send results! ({len(self._clients_done_sockets)} of {len(self._agencies)} agencies done)")
                         self._send_winners()
-                return
+                    return
 
             while True:
                 bet = self._recv_bet(client_sock, agency_id)
