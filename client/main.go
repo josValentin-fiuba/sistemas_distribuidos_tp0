@@ -115,6 +115,10 @@ func main() {
 		AttemptDelay:  v.GetInt("handshake.attemptDelay"),
 	}
 
+	if clientConfig.MaxAttempts <= 0{
+		clientConfig.MaxAttempts = 1
+	}
+
 	client := common.NewClient(clientConfig)
 
 	// Channel to capture SIGTERM signal
