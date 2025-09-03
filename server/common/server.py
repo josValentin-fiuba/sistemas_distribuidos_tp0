@@ -3,8 +3,8 @@ import logging
 import signal
 import sys
 import multiprocessing
-from common.socket_utils import recv_all
 from common.utils import *
+import common.protocol as protocol
 
 class Server:
     def __init__(self, port, listen_backlog):
@@ -46,32 +46,6 @@ class Server:
             client_sock = self.__accept_new_connection()
             pool.apply_async(self._handle_client_connection, (client_sock,))
 
-    def _recv_end_signal(self, client_sock):
-        data = recv_all(client_sock, 4)
-        agency_id = int.from_bytes(data, byteorder="big", signed=False)
-        data = recv_all(client_sock, 1)
-        signal = bool(data[0])
-        return agency_id, signal
-
-    def _recv_bet(self, client_sock, agency_id):
-        data = recv_all(client_sock, 4)
-        name_len = int.from_bytes(data, byteorder="big", signed=False)
-        data = recv_all(client_sock, 4)
-        last_name_len = int.from_bytes(data, byteorder="big", signed=False)
-        data = recv_all(client_sock, 4)
-        birthdate_len = int.from_bytes(data, byteorder="big", signed=False)
-
-        name = recv_all(client_sock, name_len).decode('utf-8')                
-        last_name = recv_all(client_sock, last_name_len).decode('utf-8')                
-        birthdate = recv_all(client_sock, birthdate_len).decode('utf-8')       
-
-        data = recv_all(client_sock, 4)
-        dni = int.from_bytes(data, byteorder="big", signed=False)
-        data = recv_all(client_sock, 4)
-        num = int.from_bytes(data, byteorder="big", signed=False)
-
-        return Bet(str(agency_id), name, last_name, str(dni), birthdate, str(num))
-
     def _send_winners(self):
         logging.info(f"action: sorteo | result: success")
         all_bets = load_bets()
@@ -88,9 +62,7 @@ class Server:
 
         for agency_id, winners in winners_per_agency.items():
             agency_sock = self._clients_done_sockets[agency_id]
-            agency_sock.sendall(len(winners).to_bytes(4, byteorder='big', signed=False))
-            for bet in winners:
-                agency_sock.sendall(int(bet.document).to_bytes(4, byteorder='big', signed=False))
+            protocol.send_agency_winners(agency_sock, winners)
             agency_sock.close()
             
         self._clients_done_sockets.clear()
@@ -126,7 +98,7 @@ class Server:
 
         bets_in_batch = []
         try:
-            agency_id, end_signal = self._recv_end_signal(client_sock)
+            agency_id, end_signal = protocol.recv_end_signal(client_sock)
             with self._cond:
                 self._agencies[agency_id] = True
             
@@ -139,7 +111,7 @@ class Server:
                 return
             
             while True:
-                bet = self._recv_bet(client_sock, agency_id)
+                bet = protocol.recv_bet(client_sock, agency_id)
                 bets_in_batch.append(bet)
             
         except ConnectionError as e:
