@@ -4,12 +4,14 @@ from common.socket_utils import *
 INT_SIZE = 4
 BOOL_SIZE = 1
 
-def recv_end_signal(client_sock):
+def recv_batch_count(client_sock):
     data = recv_all(client_sock, INT_SIZE)
     agency_id = int.from_bytes(data, byteorder="big", signed=False)
+    data = recv_all(client_sock, INT_SIZE)
+    batch_count = int.from_bytes(data, byteorder="big", signed=False)
     data = recv_all(client_sock, BOOL_SIZE)
-    signal = bool(data[0])
-    return agency_id, signal
+    is_last_batch = bool(data[0])
+    return agency_id, batch_count, is_last_batch
 
 def recv_bet(client_sock, agency_id):
     data = recv_all(client_sock, INT_SIZE)

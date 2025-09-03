@@ -21,11 +21,12 @@ func GetBetPacketSize(bet Bet) int{
 	return 12 + len(bet.name) + len(bet.lastName) + len(bet.birthDate) + 8
 }
 
-// Sends the end signal to the server (4 bytes agency_id + 1 byte signal)
-func SendEndSignal(conn net.Conn, agency_id int, signal bool) error {
+// Sends the end signal to the server (4 bytes agencyId + 4 bytes batchCount + 1 byte signal)
+func SendBatchCount(conn net.Conn, agencyId int, batchCount int, isLastBatch bool) error {
 	buf := new(bytes.Buffer)
-	binary.Write(buf, binary.BigEndian, int32(agency_id))
-	err := buf.WriteByte(BoolToByte(signal))
+	binary.Write(buf, binary.BigEndian, int32(agencyId))
+	binary.Write(buf, binary.BigEndian, int32(batchCount))
+	err := buf.WriteByte(BoolToByte(isLastBatch))
 	if(err != nil){
 		return err
 	}

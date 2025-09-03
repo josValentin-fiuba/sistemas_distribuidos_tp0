@@ -17,8 +17,7 @@ class Server:
         self._max_workers = max_agencies + 1 # (N_Agencies = Client workers) + Winners worker
         self._clients_done_sockets = manager.dict()
         self._agencies = manager.dict()
-        self._lock = manager.Lock()
-        self._cond = manager.Condition(self._lock)
+        self._cond = manager.Condition()
         self._agency_connection_timeout = agency_connection_timeout
 
     def run(self):
@@ -99,29 +98,27 @@ class Server:
 
         bets_in_batch = []
         try:
-            agency_id, end_signal = protocol.recv_end_signal(client_sock)
-            with self._cond:
-                self._agencies[agency_id] = True
-            
-                if end_signal:
-                    logging.info(f"No bets to receive. Agency({agency_id}) sent end signal")
-                    self._clients_done_sockets[agency_id] = client_sock
-                self._cond.notify_all()
+            agency_id, batch_count, is_last_batch = protocol.recv_batch_count(client_sock)
 
-            if end_signal:
-                return
-            
-            while True:
+            for _ in range(batch_count):
                 bet = protocol.recv_bet(client_sock, agency_id)
                 bets_in_batch.append(bet)
-            
-        except ConnectionError as e:
-            with self._lock:
-                store_bets(bets_in_batch)
-            logging.info(f"Connection closed {e}")
-            logging.info(f"action: apuesta_recibida | result: success | cantidad: {len(bets_in_batch)}")
-            client_sock.close()
 
+            with self._cond:
+                store_bets(bets_in_batch)
+                logging.info(f"action: apuesta_recibida | result: success | cantidad: {len(bets_in_batch)}")
+                
+                self._agencies[agency_id] = True
+
+                if is_last_batch:
+                    logging.info(f"Agency({agency_id}) LAST BATCH")
+                    # Let the socket open to send winners
+                    self._clients_done_sockets[agency_id] = client_sock
+                else:
+                    client_sock.close()
+
+                self._cond.notify_all()
+                
         except OSError as e:
             logging.error(f"action: receive_message | result: fail | error: {e}")
             logging.info(f"action: apuesta_recibida | result: fail | cantidad: {len(bets_in_batch)}")

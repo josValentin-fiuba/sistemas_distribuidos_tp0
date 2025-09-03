@@ -126,21 +126,18 @@ func (c *Client) StartClientLoop() {
 			)
 			return
 		}
-		if err := SendEndSignal(c.conn, agency_id, false); err != nil {
-			log.Errorf("Couldn't send end signal(0) to server. id %v | error: %v",
-				c.config.ID,
-				err,
-			)
-			return
-		}
 
-		bytesSent := 0
+		bytesToSend := 0
+
+		var betsBatch []Bet
+
 		for	 i := 0; i < c.config.BatchMax; i++ {
 			record, err := reader.Read()
 			if err == io.EOF {
 				done = true
 				break
 			}
+			
 			if err != nil {
 				log.Fatal(err)
 			}
@@ -151,16 +148,27 @@ func (c *Client) StartClientLoop() {
 				continue
 			}
 
-			// Hard limit for batch size (8KB)
-			if bytesSent + GetBetPacketSize(bet) > c.params.MaxBatchSize {
+			// Hard limit for Batch size (8KB)
+			if bytesToSend + GetBetPacketSize(bet) > c.params.MaxBatchSize {
 				log.Errorf("Invalid batch size, skipping")
 				c.conn.Close()
 				return
 			}
 
-			bytesSent += GetBetPacketSize(bet)
+			betsBatch = append(betsBatch, bet)
+			bytesToSend += GetBetPacketSize(bet)
+		}
 
-			err = SendBet(c.conn, bet)
+		if err := SendBatchCount(c.conn, agency_id, len(betsBatch), done); err != nil {
+			log.Errorf("Couldn't send end batch count to server. id %v | error: %v",
+				c.config.ID,
+				err,
+			)
+			return
+		}
+
+		for _, bet := range betsBatch {	
+			err := SendBet(c.conn, bet)
 			
 			if err != nil {
 				log.Errorf("Couldn't send bet to server. id %v | error: %v",
@@ -173,24 +181,10 @@ func (c *Client) StartClientLoop() {
 			log.Infof("action: apuesta_enviada | result: success | dni: %v | numero: %v", bet.dni, bet.number)
 		}
 
-		c.conn.Close()
-		time.Sleep(c.config.LoopPeriod)
-	}
-
-	if err := c.createClientSocketResilency(); err != nil {
-		log.Errorf("Couldn't connect to server. id %v | error: %v",
-			c.config.ID,
-			err,
-		)
-		return
-	}
-
-	if err := SendEndSignal(c.conn, agency_id, true); err != nil {
-		log.Errorf("Couldn't send end signal(1) to server. id %v | error: %v",
-			c.config.ID,
-			err,
-		)
-		return
+		if !done{
+			c.conn.Close()
+			time.Sleep(c.config.LoopPeriod)
+		}
 	}
 	
 	// Wait for the winner response
@@ -203,10 +197,6 @@ func (c *Client) StartClientLoop() {
 			err,
 		)
 		return
-	}
-
-	for _, dni := range winners {
-		log.Infof("action: ganador | result: success | dni: %v", dni)
 	}
 
 	log.Infof("action: consulta_ganadores | result: success | cant_ganadores: %v", len(winners))
