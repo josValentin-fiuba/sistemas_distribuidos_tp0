@@ -8,6 +8,3 @@ log:
   level: "INFO"
 batch:
   maxAmount: 50
-handshake:
-  maxAttempts: 10
-  attemptDelay: 500 # ms

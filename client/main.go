@@ -58,6 +58,28 @@ func InitConfig() (*viper.Viper, error) {
 	return v, nil
 }
 
+// Initialze the parameters from params.ini file
+func InitParams() (*viper.Viper, error) {
+	v := viper.New()
+
+	// Configure viper to read env variables with the CLI_ prefix
+	v.AutomaticEnv()
+	v.SetEnvPrefix("cli")
+
+	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+
+	// Add env variables supported
+	v.BindEnv("handshake", "maxAttempts")
+	v.BindEnv("handshake", "attemptDelay")
+
+	v.SetConfigFile("./params.yaml")
+	if err := v.ReadInConfig(); err != nil {
+		fmt.Printf("Configuration could not be read from config file. Using env variables instead")
+	}
+
+	return v, nil
+}
+
 // InitLogger Receives the log level to be set in go-logging as a string. This method
 // parses the string and set the level to the logger. If the level string is not
 // valid an error is returned
@@ -102,6 +124,11 @@ func main() {
 		log.Criticalf("%s", err)
 	}
 
+	vparams, err := InitParams()
+	if err != nil {
+		log.Criticalf("%s", err)
+	}
+
 	// Print program config with debugging purposes
 	PrintConfig(v)
 
@@ -111,18 +138,14 @@ func main() {
 		LoopAmount:    v.GetInt("loop.amount"),
 		LoopPeriod:    v.GetDuration("loop.period"),
 		BatchMax:	   v.GetInt("batch.maxAmount"),
-		MaxAttempts:   v.GetInt("handshake.maxAttempts"),
-		AttemptDelay:  v.GetInt("handshake.attemptDelay"),
 	}
 
-	if clientConfig.MaxAttempts <= 0{
-		clientConfig.MaxAttempts = 5
-	}
-	if clientConfig.AttemptDelay <= 0{
-		clientConfig.AttemptDelay = 50
+	clientParams := common.ClientParams{
+		HandshakeMaxAttempts:   vparams.GetInt("handshake.maxAttempts"),
+		HandshakeAttemptDelay:  vparams.GetInt("handshake.attemptDelay"),
 	}
 
-	client := common.NewClient(clientConfig)
+	client := common.NewClient(clientConfig, clientParams)
 
 	// Channel to capture SIGTERM signal
 	sigChan := make(chan os.Signal, 2)

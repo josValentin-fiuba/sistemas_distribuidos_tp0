@@ -1,0 +1,4 @@
+# id: 1
+handshake:
+  maxAttempts: 5
+  attemptDelay: 50 # ms

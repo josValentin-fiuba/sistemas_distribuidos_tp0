@@ -24,8 +24,12 @@ type ClientConfig struct {
 	LoopAmount    int
 	LoopPeriod    time.Duration
 	BatchMax	  int
-	MaxAttempts	  int
-	AttemptDelay  int
+}
+
+// Params used by the client logic
+type ClientParams struct {
+	HandshakeMaxAttempts  int
+	HandshakeAttemptDelay int
 }
 
 // Struct to store a bet data
@@ -40,14 +44,16 @@ type Bet struct {
 // Client Entity that encapsulates how
 type Client struct {
 	config ClientConfig
+	params ClientParams
 	conn   net.Conn
 }
 
 // NewClient Initializes a new client receiving the configuration
 // as a parameter
-func NewClient(config ClientConfig) *Client {
+func NewClient(config ClientConfig, params ClientParams) *Client {
 	client := &Client{
 		config: config,
+		params: params,
 	}
 	return client
 }
@@ -65,14 +71,14 @@ func (c *Client) createClientSocket() error {
 // to the server until success or until the max number of attempts
 // is reached
 func (c *Client) createClientSocketResilency() error {
-	for i := 0; i < c.config.MaxAttempts; i++ {
+	for i := 0; i < c.params.HandshakeMaxAttempts; i++ {
 		err := c.createClientSocket()
 		if err == nil {
 			return nil
 		}
 
-		if i < c.config.MaxAttempts-1 {
-			time.Sleep(time.Duration(c.config.AttemptDelay) * time.Millisecond)
+		if i < c.params.HandshakeMaxAttempts-1 {
+			time.Sleep(time.Duration(c.params.HandshakeAttemptDelay) * time.Millisecond)
 		}
 	}
 	return fmt.Errorf("Connection error, max connect attempts reached")
