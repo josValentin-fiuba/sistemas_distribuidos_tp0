@@ -39,6 +39,7 @@ def initialize_params():
     server_params = {}
     try:
         server_params["agencies_connection_timeout"] = int(os.getenv('AGENCIES_CONNECTION_TIMEOUT', config["DEFAULT"]["AGENCIES_CONNECTION_TIMEOUT"]))
+        server_params["max_agencies"] = int(os.getenv('MAX_AGENCIES', config["DEFAULT"]["MAX_AGENCIES"]))
     except KeyError as e:
         raise KeyError("Key was not found. Error: {} .Aborting server".format(e))
     except ValueError as e:
@@ -60,10 +61,11 @@ def main():
                   f"listen_backlog: {listen_backlog} | logging_level: {logging_level}")
 
     params = initialize_params()
+    max_agencies = params["max_agencies"]
     agencies_connection_timeout = params["agencies_connection_timeout"]
 
     # Initialize server and start server loop
-    server = Server(port, listen_backlog, agencies_connection_timeout)
+    server = Server(port, listen_backlog, max_agencies, agencies_connection_timeout)
     server.run()
 
 def initialize_log(logging_level):

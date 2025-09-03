@@ -2,3 +2,5 @@
 handshake:
   maxAttempts: 5
   attemptDelay: 50 # ms
+limits:
+  maxBatchSize: 8192 # bytes

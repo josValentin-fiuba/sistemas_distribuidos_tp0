@@ -71,6 +71,7 @@ func InitParams() (*viper.Viper, error) {
 	// Add env variables supported
 	v.BindEnv("handshake", "maxAttempts")
 	v.BindEnv("handshake", "attemptDelay")
+	v.BindEnv("limits", "maxBatchSize")
 
 	v.SetConfigFile("./params.yaml")
 	if err := v.ReadInConfig(); err != nil {
@@ -143,6 +144,7 @@ func main() {
 	clientParams := common.ClientParams{
 		HandshakeMaxAttempts:   vparams.GetInt("handshake.maxAttempts"),
 		HandshakeAttemptDelay:  vparams.GetInt("handshake.attemptDelay"),
+		MaxBatchSize:  			vparams.GetInt("limits.maxBatchSize"),
 	}
 
 	client := common.NewClient(clientConfig, clientParams)

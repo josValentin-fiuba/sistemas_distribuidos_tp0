@@ -1,15 +1,11 @@
 package common
 
 import (
-	// "bufio"
-	// "fmt"
 	"net"
 	"time"
 	"github.com/op/go-logging"
 	"os"
     "strconv"
-	"bytes"
-    "encoding/binary"
 	"encoding/csv"
 	"fmt"
 	"io"
@@ -30,6 +26,7 @@ type ClientConfig struct {
 type ClientParams struct {
 	HandshakeMaxAttempts  int
 	HandshakeAttemptDelay int
+	MaxBatchSize		  int
 }
 
 // Struct to store a bet data
@@ -84,49 +81,6 @@ func (c *Client) createClientSocketResilency() error {
 	return fmt.Errorf("Connection error, max connect attempts reached")
 }
 
-// Returns the size in bytes of a Bet struct once serialized to be sent
-func GetBetPacketSize(bet Bet) int{
-	return 12 + len(bet.name) + len(bet.lastName) + len(bet.birthDate) + 8
-}
-
-// Sends a bet to the server
-func (c *Client)SendBet(bet Bet) error {
-	buf := new(bytes.Buffer)
-
-	// 3 ints (4b each one)
-	binary.Write(buf, binary.BigEndian, int32(len(bet.name)))
-	binary.Write(buf, binary.BigEndian, int32(len(bet.lastName)))
-	binary.Write(buf, binary.BigEndian, int32(len(bet.birthDate)))
-	
-	buf.Write([]byte(bet.name))
-	buf.Write([]byte(bet.lastName))
-	buf.Write([]byte(bet.birthDate))
-
-	binary.Write(buf, binary.BigEndian, int32(bet.dni))
-	binary.Write(buf, binary.BigEndian, int32(bet.number))
-	
-	return WriteAll(c.conn, buf.Bytes())
-}
-
-// Converts a boolean to a byte (1 for true, 0 for false)
-func BoolToByte(v bool) byte {
-    if v {
-        return 1
-    }
-    return 0
-}
-
-// Sends the end signal to the server (4 bytes agency_id + 1 byte signal)
-func (c *Client)SendEndSignal(agency_id int, signal bool) error {
-	buf := new(bytes.Buffer)
-	binary.Write(buf, binary.BigEndian, int32(agency_id))
-	err := buf.WriteByte(BoolToByte(signal))
-	if(err != nil){
-		return err
-	}
-	return WriteAll(c.conn, buf.Bytes())
-}
-
 // Reads a CSV record and parses it to a Bet struct
 func ReadBet(record []string) (Bet, error) {
 	var bet Bet
@@ -151,29 +105,6 @@ func ReadBet(record []string) (Bet, error) {
 	return bet, nil
 }
 
-// Waits for the server response with the winners
-func (c *Client)GetWinnersResponse() ([]int, error) {
-	// Read number of winners (4 bytes)
-	winnersCountBytes, err := ReadAll(c.conn, 4)
-	if err != nil {
-		return nil, err
-	}
-	winnersCount := int(binary.BigEndian.Uint32(winnersCountBytes))
-
-	winners := make([]int, winnersCount)
-	for i := 0; i < winnersCount; i++ {
-		// Read winner dni (4 bytes)
-		dniBytes, err := ReadAll(c.conn, 4)
-		if err != nil {
-			return nil, err
-		}
-		dni := binary.BigEndian.Uint32(dniBytes)
-		winners[i] = int(dni)
-	}
-
-	return winners, nil
-}	
-
 // StartClientLoop Send messages to the client until some time threshold is met
 func (c *Client) StartClientLoop() {
 	agency_id, _ := strconv.Atoi(c.config.ID)
@@ -195,7 +126,7 @@ func (c *Client) StartClientLoop() {
 			)
 			return
 		}
-		if err := c.SendEndSignal(agency_id, false); err != nil {
+		if err := SendEndSignal(c.conn, agency_id, false); err != nil {
 			log.Errorf("Couldn't send end signal(0) to server. id %v | error: %v",
 				c.config.ID,
 				err,
@@ -221,7 +152,7 @@ func (c *Client) StartClientLoop() {
 			}
 
 			// Hard limit for batch size (8KB)
-			if bytesSent + GetBetPacketSize(bet) > 8192 {
+			if bytesSent + GetBetPacketSize(bet) > c.params.MaxBatchSize {
 				log.Errorf("Invalid batch size, skipping")
 				c.conn.Close()
 				return
@@ -229,7 +160,7 @@ func (c *Client) StartClientLoop() {
 
 			bytesSent += GetBetPacketSize(bet)
 
-			err = c.SendBet(bet)
+			err = SendBet(c.conn, bet)
 			
 			if err != nil {
 				log.Errorf("Couldn't send bet to server. id %v | error: %v",
@@ -254,7 +185,7 @@ func (c *Client) StartClientLoop() {
 		return
 	}
 
-	if err := c.SendEndSignal(agency_id, true); err != nil {
+	if err := SendEndSignal(c.conn, agency_id, true); err != nil {
 		log.Errorf("Couldn't send end signal(1) to server. id %v | error: %v",
 			c.config.ID,
 			err,
@@ -263,7 +194,7 @@ func (c *Client) StartClientLoop() {
 	}
 	
 	// Wait for the winner response
-	winners, err := c.GetWinnersResponse()
+	winners, err := GetWinnersResponse(c.conn)
 	c.conn.Close()
 
 	if err != nil {
@@ -272,6 +203,10 @@ func (c *Client) StartClientLoop() {
 			err,
 		)
 		return
+	}
+
+	for _, dni := range winners {
+		log.Infof("action: ganador | result: success | dni: %v", dni)
 	}
 
 	log.Infof("action: consulta_ganadores | result: success | cant_ganadores: %v", len(winners))
