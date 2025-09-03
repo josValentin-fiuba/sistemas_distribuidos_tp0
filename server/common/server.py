@@ -15,7 +15,7 @@ class Server:
         self._client_sock = None
         self._clients_done_sockets = {}
         self._agencies = set()
-        self.save_lock = multiprocessing.Lock()
+        self.lock = multiprocessing.Manager().Lock()
 
     def sigterm_handler(self, signum, _):
         logging.info('closing server socket [sigterm]')
@@ -37,13 +37,17 @@ class Server:
         # Register SIGTERM signal handler
         signal.signal(signal.SIGTERM, self.sigterm_handler)
 
-        while True:
-            self._client_sock = self.__accept_new_connection()
-            p = multiprocessing.Process(target=self.__handle_client_connection, args=(self._client_sock,))
-            p.daemon = True
-            p.start()
-            self._client_sock.close()
-            # self.__handle_client_connection(self._client_sock)
+        # Create a pool of workers
+        pool = multiprocessing.Pool(processes=5)
+
+        try:
+            while True:
+                self._client_sock = self.__accept_new_connection()
+                pool.apply_async(self._handle_client_connection, (self._client_sock,))
+        finally:
+            self._server_socket.close()
+            pool.close()
+            pool.join()
 
     def _recv_end_signal(self, client_sock):
         data = recv_all(client_sock, 4)
@@ -93,7 +97,7 @@ class Server:
 
         self._clients_done_sockets = {}
     
-    def __handle_client_connection(self, client_sock):
+    def _handle_client_connection(self, client_sock):
         """
         Read message from a specific client socket and closes the socket
 
@@ -103,12 +107,15 @@ class Server:
         bets_in_batch = []
         try:
             agency_id, end_signal = self._recv_end_signal(client_sock)
-            self._agencies.add(agency_id)
+            with self.lock:
+                self._agencies.add(agency_id)
+            
             if end_signal:
                 logging.info(f"No bets to receive. Agency({agency_id}) sent end signal")
-                self._clients_done_sockets[agency_id] = client_sock
-                if len(self._clients_done_sockets) == len(self._agencies):
-                    self._send_winners()
+                with self.lock:
+                    self._clients_done_sockets[agency_id] = client_sock
+                    if len(self._clients_done_sockets) == len(self._agencies):
+                        self._send_winners()
                 return
 
             while True:
@@ -116,7 +123,7 @@ class Server:
                 bets_in_batch.append(bet)
             
         except ConnectionError as e:
-            with self.save_lock:
+            with self.lock:
                 store_bets(bets_in_batch)
             logging.info(f"Connection closed {e}")
             logging.info(f"action: apuesta_recibida | result: success | cantidad: {len(bets_in_batch)}")
