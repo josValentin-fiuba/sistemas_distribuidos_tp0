@@ -14,10 +14,11 @@ class Server:
         self._server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self._server_socket.bind(('', port))
         self._server_socket.listen(listen_backlog)
-        self._max_workers = listen_backlog # N_Agencies = Max workers = Listen backlog
+        self._max_workers = listen_backlog + 1 # (N_Agencies = Max workers = Listen backlog) + agencies alive timeout worker
         self._clients_done_sockets = manager.dict()
         self._agencies = manager.dict()
         self._lock = manager.Lock()
+        self._cond = manager.Condition(self._lock)
 
     def run(self):
         """
@@ -29,6 +30,8 @@ class Server:
         """
 
         pool = multiprocessing.Pool(processes=self._max_workers)
+
+        pool.apply_async(self._wait_for_winners)
 
         # Register SIGTERM signal handler considering pool
         def sigterm_handler(signum, _):
@@ -92,6 +95,21 @@ class Server:
             
         self._clients_done_sockets.clear()
     
+    def _wait_for_winners(self):
+        with self._cond:
+            agencies_alive_result = self._cond.wait_for(lambda: len(self._agencies) == 5, timeout=3)
+
+            if agencies_alive_result:
+                logging.info("All agencies connected")
+            else:
+                logging.info("No more agencies will connect")
+
+            while len(self._clients_done_sockets) < len(self._agencies):
+                self._cond.wait() # Waiting for all conected agencies to finish
+
+            logging.info(f"Time to send results! ({len(self._clients_done_sockets)} of {len(self._agencies)} agencies done)")
+            self._send_winners()
+
     def _handle_client_connection(self, client_sock):
         """
         Read message from a specific client socket and closes the socket
@@ -109,19 +127,17 @@ class Server:
         bets_in_batch = []
         try:
             agency_id, end_signal = self._recv_end_signal(client_sock)
-            with self._lock:
+            with self._cond:
                 self._agencies[agency_id] = True
             
-            if end_signal:
-                logging.info(f"No bets to receive. Agency({agency_id}) sent end signal")
-                with self._lock:
+                if end_signal:
+                    logging.info(f"No bets to receive. Agency({agency_id}) sent end signal")
                     self._clients_done_sockets[agency_id] = client_sock
-                    
-                    if len(self._clients_done_sockets) == len(self._agencies):
-                        logging.info(f"Time to send results! ({len(self._clients_done_sockets)} of {len(self._agencies)} agencies done)")
-                        self._send_winners()
-                    return
+                self._cond.notify_all()
 
+            if end_signal:
+                return
+            
             while True:
                 bet = self._recv_bet(client_sock, agency_id)
                 bets_in_batch.append(bet)
