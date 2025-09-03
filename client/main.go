@@ -116,7 +116,10 @@ func main() {
 	}
 
 	if clientConfig.MaxAttempts <= 0{
-		clientConfig.MaxAttempts = 3
+		clientConfig.MaxAttempts = 5
+	}
+	if clientConfig.AttemptDelay <= 0{
+		clientConfig.AttemptDelay = 50
 	}
 
 	client := common.NewClient(clientConfig)

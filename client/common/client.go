@@ -70,8 +70,11 @@ func (c *Client) createClientSocketResilency() error {
 		if err == nil {
 			return nil
 		}
+
+		if i < c.config.MaxAttempts-1 {
+			time.Sleep(time.Duration(c.config.AttemptDelay) * time.Millisecond)
+		}
 	}
-	time.Sleep(time.Duration(c.config.AttemptDelay) * time.Millisecond)
 	return fmt.Errorf("Connection error, max connect attempts reached")
 }
 
