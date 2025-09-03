@@ -39,14 +39,9 @@ class Server:
 
         signal.signal(signal.SIGTERM, sigterm_handler)
 
-        try:
-            while True:
-                client_sock = self.__accept_new_connection()
-                pool.apply_async(self._handle_client_connection, (client_sock,))
-        finally:
-            self._server_socket.close()
-            pool.close()
-            pool.join()
+        while True:
+            client_sock = self.__accept_new_connection()
+            pool.apply_async(self._handle_client_connection, (client_sock,))
 
     def _recv_end_signal(self, client_sock):
         data = recv_all(client_sock, 4)
