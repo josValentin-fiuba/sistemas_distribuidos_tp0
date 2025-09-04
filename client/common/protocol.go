@@ -10,7 +10,7 @@ const INT_SIZE = 4
 
 // Returns the size in bytes of a Bet struct once serialized to be sent
 func GetBetPacketSize(bet Bet) int{
-	return 12 + len(bet.name) + len(bet.lastName) + len(bet.birthDate) + 8
+	return 3 * INT_SIZE + len(bet.name) + len(bet.lastName) + len(bet.birthDate) + 2 * INT_SIZE
 }
 
 // Sends the batch count to the server (4 bytes agencyId + 4 bytes batchCount)
