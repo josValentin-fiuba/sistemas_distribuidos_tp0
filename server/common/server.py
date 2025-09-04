@@ -14,7 +14,7 @@ class Server:
         self._server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self._server_socket.bind(('', port))
         self._server_socket.listen(listen_backlog)
-        self._max_workers = max_agencies + 1 # (N_Agencies = Client workers) + Winners worker
+        self._max_agencies = max_agencies
         self._clients_done_sockets = manager.dict()
         self._agencies = manager.dict()
         self._cond = manager.Condition()
@@ -29,9 +29,9 @@ class Server:
         finishes, servers starts to accept new connections again
         """
 
-        pool = multiprocessing.Pool(processes=self._max_workers)
+        pool = multiprocessing.Pool(processes=self._max_agencies + 1) # (N_Agencies = Client workers) + Ending worker
 
-        pool.apply_async(self._wait_for_winners)
+        pool.apply_async(self._wait_for_input_ending)
 
         # Register SIGTERM signal handler considering pool
         def sigterm_handler(signum, _):
@@ -61,20 +61,27 @@ class Server:
                 winners_per_agency[bet.agency].append(bet)
 
         for agency_id, winners in winners_per_agency.items():
-            agency_sock = self._clients_done_sockets[agency_id]
-            protocol.send_agency_winners(agency_sock, winners)
-            agency_sock.close()
+            try:
+                agency_sock = self._clients_done_sockets[agency_id]
+                protocol.send_agency_winners(agency_sock, winners)
+            except OSError as e:
+                logging.error(f"Couldn't send winners to agency {agency_id}. error: {e}")
+            finally:
+                agency_sock.close()
             
         self._clients_done_sockets.clear()
     
-    def _wait_for_winners(self):
+    def _wait_for_input_ending(self):
         with self._cond:
-            agencies_alive_result = self._cond.wait_for(lambda: len(self._agencies) == 5, timeout=3)
+            agencies_alive_result = self._cond.wait_for(
+                lambda: len(self._agencies) == self._max_agencies, 
+                timeout=self._agency_connection_timeout
+                )
 
             if agencies_alive_result:
                 logging.info("All agencies connected")
             else:
-                logging.info("No more agencies will connect")
+                logging.info("Not expecting more agencies to connect")
 
             while len(self._clients_done_sockets) < len(self._agencies):
                 self._cond.wait() # Waiting for all conected agencies to finish
