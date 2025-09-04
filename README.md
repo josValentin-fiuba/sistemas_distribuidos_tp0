@@ -1,10 +1,213 @@
-# TP0: Docker + Comunicaciones + Concurrencia
+# Entrega TP0 - Josue Martel - 110696
 
-En el presente repositorio se provee un esqueleto básico de cliente/servidor, en donde todas las dependencias del mismo se encuentran encapsuladas en containers. Los alumnos deberán resolver una guía de ejercicios incrementales, teniendo en cuenta las condiciones de entrega descritas al final de este enunciado.
+## Asunciones
 
- El cliente (Golang) y el servidor (Python) fueron desarrollados en diferentes lenguajes simplemente para mostrar cómo dos lenguajes de programación pueden convivir en el mismo proyecto con la ayuda de containers, en este caso utilizando [Docker Compose](https://docs.docker.com/compose/).
+- Tanto clientes como servidor se ejecutan en entornos Unix (Linux)
 
-## Instrucciones de uso
+- Como regla de negocio, el servidor siempre atiende a $n$ agencias como máximo en paralelo. donde $n = 5$ dado el enunciado, además de configurable bajo el archivo `server/params.ini`
+
+## Desarrollo Parte 1 - Introducción a Docker
+### Ejercicio 1
+Se desarrolló el script de bash `generar-compose.sh` que delega la funcionalidad de generación a un script en python `generador.py`. Se usó de referencia el esqueleto para el formato de salida del archivo generado.
+
+### Ejercicio 2
+Dado que originalmente se copian los archivos de configuración al container, se modificaron los Dockerfiles tanto de cliente como servidor. Luego se agregaron como `volumes` en el generador de compose.
+
+### Ejercicio 3
+Se definió el validador como imagen, para ser levantado como contenedor al ejecutar `validar-echo-server.sh`. 
+
+``` bash
+docker build -t validator-latest ./validator
+```
+
+Dicho validador tendrá netcat instalado y se conectará a la red `tp0_testing_net` (docker-network).
+Una vez levantado ejecutará el comando nc enviando el mensaje a validar al servidor, se esperará la respuesta y se cerrará la conexión.
+``` bash
+RESPONSE=$(docker run --rm --network tp0_testing_net --entrypoint /bin/sh validator-latest -c "echo '$MSG' | nc -q 1 server 12345")
+```
+### Ejercicio 4
+
+Para la terminación graceful ante el signal SIGTERM se implementaron los handlers correspondientes para el cierre de los sockets en cada aplicación.
+
+**Desde el cliente**
+``` go
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGTERM)
+	
+	// Goroutine to handle the SIGTERM signal
+	go func() {
+		<-sigChan
+		log.Infof("closing client socket [sigterm]")
+		client.Shutdown();
+		os.Exit(0) // Graceful exit on signal
+	}()
+```
+
+**Desde el servidor**
+
+``` python
+    def sigterm_handler(self, signum, _):
+        logging.info('closing server socket [sigterm]')
+        self._server_socket.close()
+        if self._client_sock:
+            logging.info('closing connected client socket [sigterm]')
+            self._client_sock.close()
+        sys.exit(0) # Graceful exit on signal
+    
+    def run(self):
+        ...
+        # Register SIGTERM signal handler
+        signal.signal(signal.SIGTERM, self.sigterm_handler)
+```
+
+
+## Desarrollo Parte 2 - Repaso de Comunicaciones
+
+### Ejercicio 5
+
+Las variables de entorno requeridas fueron establecidas con el generador de compose para los contenedores de los clientes.
+
+Para este ejercicio se asume que cada agencia enviará la apuesta de 1 solo cliente (definido por las variables de entorno).
+
+Para evitar los *short-writes* desde el lado del cliente, se implementó la función `WriteAll`. De forma análoga, para evitar los *short-reads* desde el lado del servidor, se implementó la función `recv_all`. Asegurando escribir y recibir una determinada cantidad de bytes respectivamente. 
+
+Se implementó el siguiente protocolo para el envío y recepción de apuesta de una persona:
+
+| Campo              | Tamaño  | Descripción                                         |
+| ------------------ | ------- | --------------------------------------------------- |
+| `n`                | 4 bytes | Longitud del nombre (entero, Big Endian)            |
+| `m`                | 4 bytes | Longitud del apellido (entero, Big Endian)          |
+| `d`                | 4 bytes | Longitud de la fecha de nacimiento (entero, Big Endian) |
+| `nombre`           | **n** bytes | Nombre (UTF-8)                                      |
+| `apellido`         | **m** bytes | Apellido (UTF-8)                                    |
+| `fecha nacimiento` | **d** bytes | Fecha de nacimiento (UTF-8, `"YYYY-MM-DD"`)     |
+| `dni`              | 4 bytes | DNI (entero, Big Endian)                            |
+| `numero apuesta`   | 4 bytes | Número de apuesta (entero, Big Endian)              |
+
+### Ejercicio 6
+
+Se agregó el archivo .csv correspondiente a cada agencia con docker-volumes mediante el generador de compose.
+
+A diferencia del ejercicio anterior, ahora se espera recibir varias apuestas en batch por conexión de agencia al servidor. Adaptando a esta situación al protocolo, se agregó el envío de cantidad de apuestas en el batch previo al envío de cada apuesta.
+
+| Campo              | Tamaño  | Descripción                                         |
+| ------------------ | ------- | --------------------------------------------------- |
+| `id`                | 4 bytes | Id de la agencia (entero, Big Endian)            |
+| `n`      | 4 bytes | Cantidad de apuestas en el batch (entero, Big Endian)          |
+
+De esta forma el servidor sabe cuántas apuestas espera recibir antes de cerrar la conexión con el cliente.
+
+Para respetar la restricción de 8KB por batch enviado (configurable en `client/params.yaml`), al leer cada apuesta se calcula y suma el tamaño de paquete que ocuparía al enviarse (en bytes), si no se sobrepasa el límite, se almacena la apuesta en lista. Finalizada la lectura (por `EOF` o `batch maxAmount`) se procede a enviar la cantidad de apuestas del batch seguido de las mismas.
+
+``` go
+
+	bytesToSend := 0
+	var betsBatch []Bet
+	for	 i := 0; i < c.config.BatchMax; i++ {
+		record, err := reader.Read()
+		// ...
+		bet, err := ReadBet(record)
+		// ...
+		// Hard limit for Batch size (8KB)
+		if bytesToSend + GetBetPacketSize(bet) > c.params.MaxBatchSize {
+			log.Errorf("Invalid batch size, skipping")
+			c.conn.Close()
+			return
+		}
+		betsBatch = append(betsBatch, bet)
+		bytesToSend += GetBetPacketSize(bet)
+	}
+	err := SendBatchCount(c.conn, agency_id, len(betsBatch)); 
+	// ...
+	for _, bet := range betsBatch {	
+		err := SendBet(c.conn, bet)
+		// ...
+	}
+	c.conn.Close()
+
+
+```
+
+### Ejercicio 7
+
+En este ejercicio el cliente debe poder recibir la lista de ganadores. Para evitar los *short-reads* desde el lado del cliente, se implementó la función `ReadAll`.
+
+Si bien se sigue enviando la cantidad de apuestas en cada batch que se envía al servidor, ahora es necesario avisarle cuándo dejar de esperar recibir más. Para esto se adapta el protocolo al enviar la cantidad de apuestas por batch, agregando un flag que representa si dicho batch es el último enviado por el cliente.
+
+| Campo              | Tamaño  | Descripción                                         |
+| ------------------ | ------- | --------------------------------------------------- |
+| `id`                | 4 bytes | Id de la agencia (entero, Big Endian)            |
+| `n`      | 4 bytes | Cantidad de apuestas en el batch (entero, Big Endian)          |
+| **`último`**      | **1 byte** | **Flag encendido si el batch es el último de la agencia (booleano, comprimido)**          |
+
+Cuando el cliente envía el flag encendido, procederá a esperar la respuesta de sus ganadores.
+
+En el lado servidor, al recibir el flag encendido de todos los clientes registrados, se procede al envío de ganadores de los mismos.
+
+Para dicho envío, se acopla al protocolo el envío de ganadores para cada agencia.
+
+| Campo              | Tamaño  | Descripción                                         |
+| ------------------ | ------- | --------------------------------------------------- |
+| `n`      | 4 bytes | Cantidad de ganadores a recibir (entero, Big Endian)          |
+...
+| `dni i`      | 4 bytes | DNI del ganador $i$ de la agencia (entero, Big Endian)          |       
+... 
+Hasta **n**
+
+## Desarrollo Parte 3 - Repaso de Concurrencia
+
+### Ejercicio 8
+Se modeló la concurrencia basada en procesos, utilizando el módulo ``multiprocessing`` de python (aprobado por la cátedra).
+
+Si bien para este tp las limitaciones del lenguaje con threads no son un problema dados los únicos 5 clientes a atender. Se eligió este modelo por la escalabilidad que provee tanto para el manejo de clientes en simultáneo como el procesamiento de batches.
+
+Definida la cantidad máxima de agencias a soportar (5 dado el enunciado y configurable en `server/params.ini`) se estableció un pool de procesos (client workers) los cuáles se encargarán de atender a cada cliente. Teniendo 5 + 1 worker que actuará como timeout del registro de clientes. Dejando así al proceso principal encargarse únicamente de la aceptación de clientes.
+
+Para la protección de recursos y sección crítica se usó una "Conditional Variable (Lock asociado)" la cual opera sobre los workers, siendo notificados aquellos clientes que finalizaron su envío de apuestas.
+
+Una vez que todos los clientes registrados hayan finalizado su envío de apuestas, cada worker se encargará de enviarle a su cliente correspondiente sus resultados.
+
+**Clients workers**
+``` python
+    def _are_agencies_done(self):
+        return len(self._agencies_done) == len(self._agencies) or self._register_timedout.value
+        
+    def _handle_client_connection(self, client_sock):
+            # ...
+            with self._cond:
+                store_bets(bets_in_batch) 
+                self._agencies[agency_id] = True
+
+                if is_last_batch:
+                    self._agencies_done[agency_id] = True
+
+                self._cond.notify_all()
+
+                if is_last_batch:
+                    while not self._are_agencies_done():
+                        self._cond.wait()
+                    self._send_winners(client_sock, agency_id)
+    
+                client_sock.close()
+            # ...
+
+```
+
+**Worker de timeout de registro**
+``` python
+    def _register_timeout_worker(self):
+        time.sleep(self._agency_connection_timeout)
+        with self._cond:
+            logging.info("Not expecting more agencies to connect")
+            self._register_timedout.value = True
+            self._cond.notify_all()
+```
+
+El timeout de espera de registro de agencias es también configurable desde `server/params.ini`
+
+NOTA: Siendo este el último ejercicio, se agregó además resilencia por parte del cliente, teniendo una cantidad de intentos de conexión al servidor configurable desde `client/params.yaml`
+
+## Ejecución
 El repositorio cuenta con un **Makefile** que incluye distintos comandos en forma de targets. Los targets se ejecutan mediante la invocación de:  **make \<target\>**. Los target imprescindibles para iniciar y detener el sistema son **docker-compose-up** y **docker-compose-down**, siendo los restantes targets de utilidad para el proceso de depuración.
 
 Los targets disponibles son:
@@ -17,164 +220,4 @@ Los targets disponibles son:
 | `docker-image`  | Construye las imágenes a ser utilizadas tanto en el servidor como en el cliente. Este target es utilizado por **docker-compose-up**, por lo cual se lo puede utilizar para probar nuevos cambios en las imágenes antes de arrancar el proyecto. |
 | `build` | Compila la aplicación cliente para ejecución en el _host_ en lugar de en Docker. De este modo la compilación es mucho más veloz, pero requiere contar con todo el entorno de Golang y Python instalados en la máquina _host_. |
 
-### Servidor
 
-Se trata de un "echo server", en donde los mensajes recibidos por el cliente se responden inmediatamente y sin alterar. 
-
-Se ejecutan en bucle las siguientes etapas:
-
-1. Servidor acepta una nueva conexión.
-2. Servidor recibe mensaje del cliente y procede a responder el mismo.
-3. Servidor desconecta al cliente.
-4. Servidor retorna al paso 1.
-
-
-### Cliente
- se conecta reiteradas veces al servidor y envía mensajes de la siguiente forma:
- 
-1. Cliente se conecta al servidor.
-2. Cliente genera mensaje incremental.
-3. Cliente envía mensaje al servidor y espera mensaje de respuesta.
-4. Servidor responde al mensaje.
-5. Servidor desconecta al cliente.
-6. Cliente verifica si aún debe enviar un mensaje y si es así, vuelve al paso 2.
-
-### Ejemplo
-
-Al ejecutar el comando `make docker-compose-up`  y luego  `make docker-compose-logs`, se observan los siguientes logs:
-
-```
-client1  | 2024-08-21 22:11:15 INFO     action: config | result: success | client_id: 1 | server_address: server:12345 | loop_amount: 5 | loop_period: 5s | log_level: DEBUG
-client1  | 2024-08-21 22:11:15 INFO     action: receive_message | result: success | client_id: 1 | msg: [CLIENT 1] Message N°1
-server   | 2024-08-21 22:11:14 DEBUG    action: config | result: success | port: 12345 | listen_backlog: 5 | logging_level: DEBUG
-server   | 2024-08-21 22:11:14 INFO     action: accept_connections | result: in_progress
-server   | 2024-08-21 22:11:15 INFO     action: accept_connections | result: success | ip: 172.25.125.3
-server   | 2024-08-21 22:11:15 INFO     action: receive_message | result: success | ip: 172.25.125.3 | msg: [CLIENT 1] Message N°1
-server   | 2024-08-21 22:11:15 INFO     action: accept_connections | result: in_progress
-server   | 2024-08-21 22:11:20 INFO     action: accept_connections | result: success | ip: 172.25.125.3
-server   | 2024-08-21 22:11:20 INFO     action: receive_message | result: success | ip: 172.25.125.3 | msg: [CLIENT 1] Message N°2
-server   | 2024-08-21 22:11:20 INFO     action: accept_connections | result: in_progress
-client1  | 2024-08-21 22:11:20 INFO     action: receive_message | result: success | client_id: 1 | msg: [CLIENT 1] Message N°2
-server   | 2024-08-21 22:11:25 INFO     action: accept_connections | result: success | ip: 172.25.125.3
-server   | 2024-08-21 22:11:25 INFO     action: receive_message | result: success | ip: 172.25.125.3 | msg: [CLIENT 1] Message N°3
-client1  | 2024-08-21 22:11:25 INFO     action: receive_message | result: success | client_id: 1 | msg: [CLIENT 1] Message N°3
-server   | 2024-08-21 22:11:25 INFO     action: accept_connections | result: in_progress
-server   | 2024-08-21 22:11:30 INFO     action: accept_connections | result: success | ip: 172.25.125.3
-server   | 2024-08-21 22:11:30 INFO     action: receive_message | result: success | ip: 172.25.125.3 | msg: [CLIENT 1] Message N°4
-server   | 2024-08-21 22:11:30 INFO     action: accept_connections | result: in_progress
-client1  | 2024-08-21 22:11:30 INFO     action: receive_message | result: success | client_id: 1 | msg: [CLIENT 1] Message N°4
-server   | 2024-08-21 22:11:35 INFO     action: accept_connections | result: success | ip: 172.25.125.3
-server   | 2024-08-21 22:11:35 INFO     action: receive_message | result: success | ip: 172.25.125.3 | msg: [CLIENT 1] Message N°5
-client1  | 2024-08-21 22:11:35 INFO     action: receive_message | result: success | client_id: 1 | msg: [CLIENT 1] Message N°5
-server   | 2024-08-21 22:11:35 INFO     action: accept_connections | result: in_progress
-client1  | 2024-08-21 22:11:40 INFO     action: loop_finished | result: success | client_id: 1
-client1 exited with code 0
-```
-
-
-## Parte 1: Introducción a Docker
-En esta primera parte del trabajo práctico se plantean una serie de ejercicios que sirven para introducir las herramientas básicas de Docker que se utilizarán a lo largo de la materia. El entendimiento de las mismas será crucial para el desarrollo de los próximos TPs.
-
-### Ejercicio N°1:
-Definir un script de bash `generar-compose.sh` que permita crear una definición de Docker Compose con una cantidad configurable de clientes.  El nombre de los containers deberá seguir el formato propuesto: client1, client2, client3, etc. 
-
-El script deberá ubicarse en la raíz del proyecto y recibirá por parámetro el nombre del archivo de salida y la cantidad de clientes esperados:
-
-`./generar-compose.sh docker-compose-dev.yaml 5`
-
-Considerar que en el contenido del script pueden invocar un subscript de Go o Python:
-
-```
-#!/bin/bash
-echo "Nombre del archivo de salida: $1"
-echo "Cantidad de clientes: $2"
-python3 mi-generador.py $1 $2
-```
-
-En el archivo de Docker Compose de salida se pueden definir volúmenes, variables de entorno y redes con libertad, pero recordar actualizar este script cuando se modifiquen tales definiciones en los sucesivos ejercicios.
-
-### Ejercicio N°2:
-Modificar el cliente y el servidor para lograr que realizar cambios en el archivo de configuración no requiera reconstruír las imágenes de Docker para que los mismos sean efectivos. La configuración a través del archivo correspondiente (`config.ini` y `config.yaml`, dependiendo de la aplicación) debe ser inyectada en el container y persistida por fuera de la imagen (hint: `docker volumes`).
-
-
-### Ejercicio N°3:
-Crear un script de bash `validar-echo-server.sh` que permita verificar el correcto funcionamiento del servidor utilizando el comando `netcat` para interactuar con el mismo. Dado que el servidor es un echo server, se debe enviar un mensaje al servidor y esperar recibir el mismo mensaje enviado.
-
-En caso de que la validación sea exitosa imprimir: `action: test_echo_server | result: success`, de lo contrario imprimir:`action: test_echo_server | result: fail`.
-
-El script deberá ubicarse en la raíz del proyecto. Netcat no debe ser instalado en la máquina _host_ y no se pueden exponer puertos del servidor para realizar la comunicación (hint: `docker network`). `
-
-
-### Ejercicio N°4:
-Modificar servidor y cliente para que ambos sistemas terminen de forma _graceful_ al recibir la signal SIGTERM. Terminar la aplicación de forma _graceful_ implica que todos los _file descriptors_ (entre los que se encuentran archivos, sockets, threads y procesos) deben cerrarse correctamente antes que el thread de la aplicación principal muera. Loguear mensajes en el cierre de cada recurso (hint: Verificar que hace el flag `-t` utilizado en el comando `docker compose down`).
-
-## Parte 2: Repaso de Comunicaciones
-
-Las secciones de repaso del trabajo práctico plantean un caso de uso denominado **Lotería Nacional**. Para la resolución de las mismas deberá utilizarse como base el código fuente provisto en la primera parte, con las modificaciones agregadas en el ejercicio 4.
-
-### Ejercicio N°5:
-Modificar la lógica de negocio tanto de los clientes como del servidor para nuestro nuevo caso de uso.
-
-#### Cliente
-Emulará a una _agencia de quiniela_ que participa del proyecto. Existen 5 agencias. Deberán recibir como variables de entorno los campos que representan la apuesta de una persona: nombre, apellido, DNI, nacimiento, numero apostado (en adelante 'número'). Ej.: `NOMBRE=Santiago Lionel`, `APELLIDO=Lorca`, `DOCUMENTO=30904465`, `NACIMIENTO=1999-03-17` y `NUMERO=7574` respectivamente.
-
-Los campos deben enviarse al servidor para dejar registro de la apuesta. Al recibir la confirmación del servidor se debe imprimir por log: `action: apuesta_enviada | result: success | dni: ${DNI} | numero: ${NUMERO}`.
-
-
-
-#### Servidor
-Emulará a la _central de Lotería Nacional_. Deberá recibir los campos de la cada apuesta desde los clientes y almacenar la información mediante la función `store_bet(...)` para control futuro de ganadores. La función `store_bet(...)` es provista por la cátedra y no podrá ser modificada por el alumno.
-Al persistir se debe imprimir por log: `action: apuesta_almacenada | result: success | dni: ${DNI} | numero: ${NUMERO}`.
-
-#### Comunicación:
-Se deberá implementar un módulo de comunicación entre el cliente y el servidor donde se maneje el envío y la recepción de los paquetes, el cual se espera que contemple:
-* Definición de un protocolo para el envío de los mensajes.
-* Serialización de los datos.
-* Correcta separación de responsabilidades entre modelo de dominio y capa de comunicación.
-* Correcto empleo de sockets, incluyendo manejo de errores y evitando los fenómenos conocidos como [_short read y short write_](https://cs61.seas.harvard.edu/site/2018/FileDescriptors/).
-
-
-### Ejercicio N°6:
-Modificar los clientes para que envíen varias apuestas a la vez (modalidad conocida como procesamiento por _chunks_ o _batchs_). 
-Los _batchs_ permiten que el cliente registre varias apuestas en una misma consulta, acortando tiempos de transmisión y procesamiento.
-
-La información de cada agencia será simulada por la ingesta de su archivo numerado correspondiente, provisto por la cátedra dentro de `.data/datasets.zip`.
-Los archivos deberán ser inyectados en los containers correspondientes y persistido por fuera de la imagen (hint: `docker volumes`), manteniendo la convencion de que el cliente N utilizara el archivo de apuestas `.data/agency-{N}.csv` .
-
-En el servidor, si todas las apuestas del *batch* fueron procesadas correctamente, imprimir por log: `action: apuesta_recibida | result: success | cantidad: ${CANTIDAD_DE_APUESTAS}`. En caso de detectar un error con alguna de las apuestas, debe responder con un código de error a elección e imprimir: `action: apuesta_recibida | result: fail | cantidad: ${CANTIDAD_DE_APUESTAS}`.
-
-La cantidad máxima de apuestas dentro de cada _batch_ debe ser configurable desde config.yaml. Respetar la clave `batch: maxAmount`, pero modificar el valor por defecto de modo tal que los paquetes no excedan los 8kB. 
-
-Por su parte, el servidor deberá responder con éxito solamente si todas las apuestas del _batch_ fueron procesadas correctamente.
-
-### Ejercicio N°7:
-
-Modificar los clientes para que notifiquen al servidor al finalizar con el envío de todas las apuestas y así proceder con el sorteo.
-Inmediatamente después de la notificacion, los clientes consultarán la lista de ganadores del sorteo correspondientes a su agencia.
-Una vez el cliente obtenga los resultados, deberá imprimir por log: `action: consulta_ganadores | result: success | cant_ganadores: ${CANT}`.
-
-El servidor deberá esperar la notificación de las 5 agencias para considerar que se realizó el sorteo e imprimir por log: `action: sorteo | result: success`.
-Luego de este evento, podrá verificar cada apuesta con las funciones `load_bets(...)` y `has_won(...)` y retornar los DNI de los ganadores de la agencia en cuestión. Antes del sorteo no se podrán responder consultas por la lista de ganadores con información parcial.
-
-Las funciones `load_bets(...)` y `has_won(...)` son provistas por la cátedra y no podrán ser modificadas por el alumno.
-
-No es correcto realizar un broadcast de todos los ganadores hacia todas las agencias, se espera que se informen los DNIs ganadores que correspondan a cada una de ellas.
-
-## Parte 3: Repaso de Concurrencia
-En este ejercicio es importante considerar los mecanismos de sincronización a utilizar para el correcto funcionamiento de la persistencia.
-
-### Ejercicio N°8:
-
-Modificar el servidor para que permita aceptar conexiones y procesar mensajes en paralelo. En caso de que el alumno implemente el servidor en Python utilizando _multithreading_,  deberán tenerse en cuenta las [limitaciones propias del lenguaje](https://wiki.python.org/moin/GlobalInterpreterLock).
-
-## Condiciones de Entrega
-Se espera que los alumnos realicen un _fork_ del presente repositorio para el desarrollo de los ejercicios y que aprovechen el esqueleto provisto tanto (o tan poco) como consideren necesario.
-
-Cada ejercicio deberá resolverse en una rama independiente con nombres siguiendo el formato `ej${Nro de ejercicio}`. Se permite agregar commits en cualquier órden, así como crear una rama a partir de otra, pero al momento de la entrega deberán existir 8 ramas llamadas: ej1, ej2, ..., ej7, ej8.
- (hint: verificar listado de ramas y últimos commits con `git ls-remote`)
-
-Se espera que se redacte una sección del README en donde se indique cómo ejecutar cada ejercicio y se detallen los aspectos más importantes de la solución provista, como ser el protocolo de comunicación implementado (Parte 2) y los mecanismos de sincronización utilizados (Parte 3).
-
-Se proveen [pruebas automáticas](https://github.com/7574-sistemas-distribuidos/tp0-tests) de caja negra. Se exige que la resolución de los ejercicios pase tales pruebas, o en su defecto que las discrepancias sean justificadas y discutidas con los docentes antes del día de la entrega. El incumplimiento de las pruebas es condición de desaprobación, pero su cumplimiento no es suficiente para la aprobación. Respetar las entradas de log planteadas en los ejercicios, pues son las que se chequean en cada uno de los tests.
-
-La corrección personal tendrá en cuenta la calidad del código entregado y casos de error posibles, se manifiesten o no durante la ejecución del trabajo práctico. Se pide a los alumnos leer atentamente y **tener en cuenta** los criterios de corrección informados  [en el campus](https://campusgrado.fi.uba.ar/mod/page/view.php?id=73393).
