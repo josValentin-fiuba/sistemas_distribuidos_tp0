@@ -48,24 +48,22 @@ class Server:
             pool.apply_async(self._handle_client_connection, (client_sock,))
 
     def _send_winners(self, agency_sock, agency_id):
-        logging.info(f"action: sorteo | result: success")
-        all_bets = load_bets()
-
-        agency_winners = []
-        
-        for bet in all_bets:
-            if not has_won(bet):
-                continue
-            if bet.agency != agency_id:
-                continue   
-            agency_winners.append(bet)
-
         try:
+            logging.info(f"action: sorteo | result: success")
+            all_bets = load_bets()
+    
+            agency_winners = []
+            
+            for bet in all_bets:
+                if not has_won(bet):
+                    continue
+                if bet.agency != agency_id:
+                    continue   
+                agency_winners.append(bet)
+    
             protocol.send_agency_winners(agency_sock, agency_winners)
         except OSError as e:
             logging.error(f"Couldn't send winners to agency {agency_id}. error: {e}")
-        finally:
-            agency_sock.close()
                 
     def _register_timeout_worker(self):
         time.sleep(self._agency_connection_timeout)
@@ -73,6 +71,9 @@ class Server:
             logging.info("Not expecting more agencies to connect")
             self._register_timedout.value = True
             self._cond.notify_all()
+
+    def _are_agencies_done(self):
+        return len(self._agencies_done) == len(self._agencies) or self._register_timedout.value
 
     def _handle_client_connection(self, client_sock):
         """
@@ -109,11 +110,11 @@ class Server:
                 self._cond.notify_all()
 
                 if is_last_batch:
-                    while not self._register_timedout.value or len(self._agencies_done) < len(self._agencies):
+                    while not self._are_agencies_done():
                         self._cond.wait()
                     self._send_winners(client_sock, agency_id)
-                else:
-                    client_sock.close()
+                
+                client_sock.close()
 
         except OSError as e:
             logging.error(f"action: receive_message | result: fail | error: {e}")

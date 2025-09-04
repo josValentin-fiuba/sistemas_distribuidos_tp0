@@ -161,41 +161,46 @@ Se modeló la concurrencia basada en procesos, utilizando el módulo ``multiproc
 
 Si bien para este tp las limitaciones del lenguaje con threads no son un problema dados los únicos 5 clientes a atender. Se eligió este modelo por la escalabilidad que provee tanto para el manejo de clientes en simultáneo como el procesamiento de batches.
 
-Definida la cantidad máxima de agencias a soportar (5 dado el enunciado y configurable en `server/params.ini`) se estableció un pool de procesos (client workers) los cuáles se encargarán de atender a cada cliente. Teniendo 5 + 1 worker que esperará hasta que todos los clientes hayan enviado sus apuestas (lo llamaremos Ending worker). Dejando así al proceso principal encargarse únicamente de la aceptación de clientes.
+Definida la cantidad máxima de agencias a soportar (5 dado el enunciado y configurable en `server/params.ini`) se estableció un pool de procesos (client workers) los cuáles se encargarán de atender a cada cliente. Teniendo 5 + 1 worker que actuará como timeout del registro de clientes. Dejando así al proceso principal encargarse únicamente de la aceptación de clientes.
 
-Para la protección de recursos y sección crítica se usó una "Conditional Variable (Lock asociado)" la cual opera sobre el Ending worker, siendo notificado cuando un cliente persiste el batch enviado.
+Para la protección de recursos y sección crítica se usó una "Conditional Variable (Lock asociado)" la cual opera sobre los workers, siendo notificados aquellos clientes que finalizaron su envío de apuestas.
+
+Una vez que todos los clientes registrados hayan finalizado su envío de apuestas, cada worker se encargará de enviarle a su cliente correspondiente sus resultados.
 
 **Clients workers**
 ``` python
+    def _are_agencies_done(self):
+        return len(self._agencies_done) == len(self._agencies) or self._register_timedout.value
+        
     def _handle_client_connection(self, client_sock):
             # ...
             with self._cond:
-                store_bets(bets_in_batch)                
+                store_bets(bets_in_batch) 
                 self._agencies[agency_id] = True
 
                 if is_last_batch:
-                    self._clients_done_sockets[agency_id] = client_sock
-                else:
-                    client_sock.close()
+                    self._agencies_done[agency_id] = True
 
                 self._cond.notify_all()
+
+                if is_last_batch:
+                    while not self._are_agencies_done():
+                        self._cond.wait()
+                    self._send_winners(client_sock, agency_id)
+    
+                client_sock.close()
             # ...
 
 ```
 
-**Ending worker**
+**Worker de timeout de registro**
 ``` python
-   def _wait_for_input_ending(self):
+    def _register_timeout_worker(self):
+        time.sleep(self._agency_connection_timeout)
         with self._cond:
-            agencies_alive_result = self._cond.wait_for(
-                lambda: len(self._agencies) == self._max_agencies, 
-                timeout=self._agency_connection_timeout
-                )
-            # ...
-            while len(self._clients_done_sockets) < len(self._agencies):
-                self._cond.wait() # Waiting for all conected agencies to finish
-
-            self._send_winners()
+            logging.info("Not expecting more agencies to connect")
+            self._register_timedout.value = True
+            self._cond.notify_all()
 ```
 
 El timeout de espera de registro de agencias es también configurable desde `server/params.ini`
