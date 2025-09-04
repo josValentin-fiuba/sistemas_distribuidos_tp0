@@ -58,6 +58,27 @@ func InitConfig() (*viper.Viper, error) {
 	return v, nil
 }
 
+// Initialze the parameters from params.ini file
+func InitParams() (*viper.Viper, error) {
+	v := viper.New()
+
+	// Configure viper to read env variables with the CLI_ prefix
+	v.AutomaticEnv()
+	v.SetEnvPrefix("cli")
+
+	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+
+	// Add env variables supported
+	v.BindEnv("limits", "maxBatchSize")
+
+	v.SetConfigFile("./params.yaml")
+	if err := v.ReadInConfig(); err != nil {
+		fmt.Printf("Configuration could not be read from config file. Using env variables instead")
+	}
+
+	return v, nil
+}
+
 // InitLogger Receives the log level to be set in go-logging as a string. This method
 // parses the string and set the level to the logger. If the level string is not
 // valid an error is returned
@@ -102,6 +123,11 @@ func main() {
 		log.Criticalf("%s", err)
 	}
 
+	vparams, err := InitParams()
+	if err != nil {
+		log.Criticalf("%s", err)
+	}
+
 	// Print program config with debugging purposes
 	PrintConfig(v)
 
@@ -113,7 +139,11 @@ func main() {
 		BatchMax:	   v.GetInt("batch.maxAmount"),
 	}
 
-	client := common.NewClient(clientConfig)
+	clientParams := common.ClientParams{
+		MaxBatchSize:  			vparams.GetInt("limits.maxBatchSize"),
+	}
+
+	client := common.NewClient(clientConfig, clientParams)
 
 	// Channel to capture SIGTERM signal
 	sigChan := make(chan os.Signal, 1)

@@ -2,8 +2,8 @@ import socket
 import logging
 import signal
 import sys
-from common.socket_utils import recv_all
 from common.utils import *
+import common.protocol as protocol
 
 class Server:
     def __init__(self, port, listen_backlog):
@@ -39,26 +39,6 @@ class Server:
             self.__handle_client_connection(self._client_sock, agency_index)
             agency_index += 1
 
-    def _recv_bet(self, client_sock, agency_index):
-        data = recv_all(client_sock, 4)
-        name_len = int.from_bytes(data, byteorder="big", signed=False)
-        data = recv_all(client_sock, 4)
-        last_name_len = int.from_bytes(data, byteorder="big", signed=False)
-        data = recv_all(client_sock, 4)
-        birthdate_len = int.from_bytes(data, byteorder="big", signed=False)
-
-        name = recv_all(client_sock, name_len).decode('utf-8')                
-        last_name = recv_all(client_sock, last_name_len).decode('utf-8')                
-        birthdate = recv_all(client_sock, birthdate_len).decode('utf-8')       
-
-        data = recv_all(client_sock, 4)
-        dni = int.from_bytes(data, byteorder="big", signed=False)
-        data = recv_all(client_sock, 4)
-        num = int.from_bytes(data, byteorder="big", signed=False)
-
-        return Bet(str(agency_index), name, last_name, str(dni), birthdate, str(num))
-
-
     def __handle_client_connection(self, client_sock, agency_index):
         """
         Read message from a specific client socket and closes the socket
@@ -68,15 +48,15 @@ class Server:
         """
         bets_in_batch = []
         try:
-            while True:
-                bet = self._recv_bet(client_sock, agency_index)
+            agency_id, batch_count = protocol.recv_batch_count(client_sock)
+
+            for _ in range(batch_count):
+                bet = protocol.recv_bet(client_sock, agency_id)
                 bets_in_batch.append(bet)
             
-        except ConnectionError as e:
-            logging.info(f"Connection closed {e}")
             store_bets(bets_in_batch)
             logging.info(f"action: apuesta_recibida | result: success | cantidad: {len(bets_in_batch)}")
-
+            
         except OSError as e:
             # logging.error("action: receive_message | result: fail | error: {e}")
             logging.info(f"action: apuesta_recibida | result: fail | cantidad: {len(bets_in_batch)}")
