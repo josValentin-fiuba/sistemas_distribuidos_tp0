@@ -4,7 +4,7 @@
 
 - Tanto clientes como servidor se ejecutan en entornos Unix (Linux)
 
-- Como regla de negocio, el servidor siempre atiende a $n$ agencias como máximo en paralelo. donde $n = 5$ dado el enunciado, además de configurable bajo el archivo `params.ini`
+- Como regla de negocio, el servidor siempre atiende a $n$ agencias como máximo en paralelo. donde $n = 5$ dado el enunciado, además de configurable bajo el archivo `server/params.ini`
 
 ## Desarrollo Parte 1 - Introducción a Docker
 ### Ejercicio 1

@@ -15,8 +15,9 @@ class Server:
         self._server_socket.bind(('', port))
         self._server_socket.listen(listen_backlog)
         self._max_agencies = max_agencies
-        self._clients_done_sockets = manager.dict()
         self._agencies = manager.dict()
+        self._agencies_done = manager.dict()
+        self._register_timedout = manager.Value('b', False)
         self._cond = manager.Condition()
         self._agency_connection_timeout = agency_connection_timeout
 
@@ -31,7 +32,7 @@ class Server:
 
         pool = multiprocessing.Pool(processes=self._max_agencies + 1) # (N_Agencies = Client workers) + Ending worker
 
-        pool.apply_async(self._wait_for_input_ending)
+        pool.apply_async(self._register_timeout_worker)
 
         # Register SIGTERM signal handler considering pool
         def sigterm_handler(signum, _):
@@ -46,48 +47,32 @@ class Server:
             client_sock = self.__accept_new_connection()
             pool.apply_async(self._handle_client_connection, (client_sock,))
 
-    def _send_winners(self):
+    def _send_winners(self, agency_sock, agency_id):
         logging.info(f"action: sorteo | result: success")
         all_bets = load_bets()
 
-        winners_per_agency = {}
-        for agency_id in self._clients_done_sockets.keys():
-            winners_per_agency[agency_id] = []
+        agency_winners = []
         
         for bet in all_bets:
             if not has_won(bet):
                 continue
-            if bet.agency in winners_per_agency:
-                winners_per_agency[bet.agency].append(bet)
+            if bet.agency != agency_id:
+                continue   
+            agency_winners.append(bet)
 
-        for agency_id, winners in winners_per_agency.items():
-            try:
-                agency_sock = self._clients_done_sockets[agency_id]
-                protocol.send_agency_winners(agency_sock, winners)
-            except OSError as e:
-                logging.error(f"Couldn't send winners to agency {agency_id}. error: {e}")
-            finally:
-                agency_sock.close()
-            
-        self._clients_done_sockets.clear()
-    
-    def _wait_for_input_ending(self):
+        try:
+            protocol.send_agency_winners(agency_sock, agency_winners)
+        except OSError as e:
+            logging.error(f"Couldn't send winners to agency {agency_id}. error: {e}")
+        finally:
+            agency_sock.close()
+                
+    def _register_timeout_worker(self):
+        time.sleep(self._agency_connection_timeout)
         with self._cond:
-            agencies_alive_result = self._cond.wait_for(
-                lambda: len(self._agencies) == self._max_agencies, 
-                timeout=self._agency_connection_timeout
-                )
-
-            if agencies_alive_result:
-                logging.info("All agencies connected")
-            else:
-                logging.info("Not expecting more agencies to connect")
-
-            while len(self._clients_done_sockets) < len(self._agencies):
-                self._cond.wait() # Waiting for all conected agencies to finish
-
-            logging.info(f"Time to send results! ({len(self._clients_done_sockets)} of {len(self._agencies)} agencies done)")
-            self._send_winners()
+            logging.info("Not expecting more agencies to connect")
+            self._register_timedout.value = True
+            self._cond.notify_all()
 
     def _handle_client_connection(self, client_sock):
         """
@@ -119,13 +104,17 @@ class Server:
 
                 if is_last_batch:
                     logging.info(f"Agency({agency_id}) LAST BATCH")
-                    # Let the socket open to send winners
-                    self._clients_done_sockets[agency_id] = client_sock
+                    self._agencies_done[agency_id] = True
+
+                self._cond.notify_all()
+
+                if is_last_batch:
+                    while not self._register_timedout.value or len(self._agencies_done) < len(self._agencies):
+                        self._cond.wait()
+                    self._send_winners(client_sock, agency_id)
                 else:
                     client_sock.close()
 
-                self._cond.notify_all()
-                
         except OSError as e:
             logging.error(f"action: receive_message | result: fail | error: {e}")
             logging.info(f"action: apuesta_recibida | result: fail | cantidad: {len(bets_in_batch)}")
