@@ -40,9 +40,10 @@ type Bet struct {
 
 // Client Entity that encapsulates how
 type Client struct {
-	config ClientConfig
-	params ClientParams
-	conn   net.Conn
+	config 	  ClientConfig
+	params 	  ClientParams
+	conn   	  net.Conn
+	dataset   *os.File
 }
 
 // NewClient Initializes a new client receiving the configuration
@@ -102,9 +103,9 @@ func (c *Client) StartClientLoop() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer f.Close()
-
-	reader := csv.NewReader(f)
+	c.dataset = f
+	defer c.dataset.Close()
+	reader := csv.NewReader(c.dataset)
 	
 	done := false
 	for !done {
@@ -198,5 +199,10 @@ func (c *Client) StartClientLoop() {
 func (c *Client) Shutdown() {
 	if c.conn != nil {
 		c.conn.Close()
+		c.conn = nil
+	}
+	if c.dataset != nil {
+		c.dataset.Close()
+		c.dataset = nil
 	}
 }
