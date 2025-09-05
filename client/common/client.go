@@ -44,6 +44,7 @@ type Client struct {
 	params 	  ClientParams
 	conn   	  net.Conn
 	dataset   *os.File
+	end    	  bool
 }
 
 // NewClient Initializes a new client receiving the configuration
@@ -119,6 +120,9 @@ func (c *Client) StartClientLoop() {
 	
 	done := false
 	for !done {
+		if c.end {
+			return
+		}
 
 		if err := c.createClientSocketResilency(); err != nil {
 			log.Errorf("Couldn't connect to server. id %v | error: %v",
@@ -207,6 +211,7 @@ func (c *Client) StartClientLoop() {
 
 // Shutdown Closes the client connection
 func (c *Client) Shutdown() {
+	c.end = true
 	if c.conn != nil {
 		c.conn.Close()
 		c.conn = nil
