@@ -22,6 +22,7 @@ type ClientConfig struct {
 type Client struct {
 	config ClientConfig
 	conn   net.Conn
+	end    bool
 }
 
 // NewClient Initializes a new client receiving the configuration
@@ -54,6 +55,10 @@ func (c *Client) StartClientLoop() {
 	// There is an autoincremental msgID to identify every message sent
 	// Messages if the message amount threshold has not been surpassed
 	for msgID := 1; msgID <= c.config.LoopAmount; msgID++ {
+		if c.end {
+			return
+		}
+
 		// Create the connection the server in every loop iteration. Send an
 		if err := c.createClientSocket(); err != nil{
 			log.Errorf("Couldn't connect to server. id %v | error: %v",
@@ -95,6 +100,7 @@ func (c *Client) StartClientLoop() {
 
 // Shutdown Closes the client connection
 func (c *Client) Shutdown() {
+	c.end = true
 	if c.conn != nil {
 		c.conn.Close()
 	}
