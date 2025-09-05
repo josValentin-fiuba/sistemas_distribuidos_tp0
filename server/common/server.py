@@ -17,7 +17,6 @@ class Server:
         if self._client_sock:
             logging.info('closing connected client socket [sigterm]')
             self._client_sock.close()
-        sys.exit(0) # Graceful exit on signal
 
     def run(self):
         """
@@ -30,10 +29,20 @@ class Server:
 
         # Register SIGTERM signal handler
         signal.signal(signal.SIGTERM, self.sigterm_handler)
+        signal.signal(signal.SIGINT, self.sigterm_handler)
 
-        while True:
-            self._client_sock = self.__accept_new_connection()
-            self.__handle_client_connection(self._client_sock)
+        try:
+            while True:
+                self._client_sock = self.__accept_new_connection()
+                self.__handle_client_connection(self._client_sock)
+
+        except OSError as e:
+            logging.error(f"Error accepting clients: {e}")
+            
+        finally:
+            self._server_socket.close()
+            if self._client_sock != None:
+                self._client_sock.close()
 
     def __handle_client_connection(self, client_sock):
         """

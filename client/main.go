@@ -116,14 +116,13 @@ func main() {
 
 	// Channel to capture SIGTERM signal
 	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGTERM)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 	
 	// Goroutine to handle the SIGTERM signal
 	go func() {
 		<-sigChan
 		log.Infof("closing client socket [sigterm]")
 		client.Shutdown();
-		os.Exit(0) // Graceful exit on signal
 	}()
 
 	client.StartClientLoop()

@@ -46,7 +46,7 @@ func (c *Client) createClientSocket() error {
 		)
 	}
 	c.conn = conn
-	return nil
+	return err
 }
 
 // StartClientLoop Send messages to the client until some time threshold is met
@@ -55,7 +55,13 @@ func (c *Client) StartClientLoop() {
 	// Messages if the message amount threshold has not been surpassed
 	for msgID := 1; msgID <= c.config.LoopAmount; msgID++ {
 		// Create the connection the server in every loop iteration. Send an
-		c.createClientSocket()
+		if err := c.createClientSocket(); err != nil{
+			log.Errorf("Couldn't connect to server. id %v | error: %v",
+				c.config.ID,
+				err,
+			)
+			return
+		}
 
 		// TODO: Modify the send to avoid short-write
 		fmt.Fprintf(
