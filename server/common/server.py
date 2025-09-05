@@ -18,6 +18,7 @@ class Server:
         self._agencies = manager.dict()
         self._agencies_done = manager.dict()
         self._register_timedout = manager.Value('b', False)
+        self._must_exit = manager.Value('b', False)
         self._cond = manager.Condition()
         self._agency_connection_timeout = agency_connection_timeout
 
@@ -37,15 +38,28 @@ class Server:
         # Register SIGTERM signal handler considering pool
         def sigterm_handler(signum, _):
             logging.info('closing server socket [sigterm]')
-            self._server_socket.close()
+            self._server_socket.close() # This will generate an exception on acceptor that is handled, letting the graceful exit success 
+            with self._cond:
+                self._must_exit.value = True
+                self._cond.notify_all()
             pool.terminate() # Terminate all worker processes (send SIGTERM to children)
-            sys.exit(0) # Graceful exit on signal
 
         signal.signal(signal.SIGTERM, sigterm_handler)
+        signal.signal(signal.SIGINT, sigterm_handler)
 
-        while True:
-            client_sock = self.__accept_new_connection()
-            pool.apply_async(self._handle_client_connection, (client_sock,))
+        client_sock = None
+        try:
+            while True:
+                client_sock = self.__accept_new_connection()
+                pool.apply_async(self._handle_client_connection, (client_sock,))
+
+        except OSError as e:
+            logging.error(f"Error accepting clients: {e}")
+            
+        finally:
+            self._server_socket.close()
+            if client_sock != None:
+                client_sock.close()
 
     def _send_winners(self, agency_sock, agency_id):
         try:
@@ -86,8 +100,9 @@ class Server:
         # Each worker process should handle SIGTERM to close client socket and end gracefully
         def worker_sigterm_handler(signum, _):
             client_sock.close()
-            sys.exit(0)
+
         signal.signal(signal.SIGTERM, worker_sigterm_handler)
+        signal.signal(signal.SIGINT, worker_sigterm_handler)
 
         bets_in_batch = []
         try:
@@ -110,9 +125,11 @@ class Server:
                 self._cond.notify_all()
 
                 if is_last_batch:
-                    while not self._are_agencies_done():
+                    while not self._are_agencies_done() and not self._must_exit.value:
                         self._cond.wait()
-                    self._send_winners(client_sock, agency_id)
+
+                    if not self._must_exit.value:                
+                        self._send_winners(client_sock, agency_id)
                 
                 client_sock.close()
 

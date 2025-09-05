@@ -176,7 +176,7 @@ func (c *Client) StartClientLoop() {
 					c.config.ID,
 					err,
 				)
-				break
+				return
 			}
 
 			log.Infof("action: apuesta_enviada | result: success | dni: %v | numero: %v", bet.dni, bet.number)
